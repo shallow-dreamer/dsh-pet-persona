@@ -1,0 +1,67 @@
+{
+  "name": "dsh-pet-persona",
+  "version": "0.10.1",
+  "type": "module",
+  "description": "给 dsh-pet 补上跨会话长期事实记忆、自我记忆、免手语音与受限自治：注册 memory provider，recall 纯同步注入【长期记忆】，capture 异步抽取事实并记录自身经历；设置页提供记忆脑图、人格预览、它自己时间线、声纹语音与「自主」待确认动作。",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "scripts",
+    "docs",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "dsh-pet",
+    "memory",
+    "mindmap"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "test:files": "node test/facts.test.js && node test/recall.test.js && node test/learn.test.js && node test/index.test.js && node test/ui.test.js && node test/voice.test.js && node test/self.test.js && node test/self-context.test.js && node test/models.test.js && node test/agency.test.js && node test/autonomy.test.js && node test/tts-emotion.test.js",
+    "acceptance": "node scripts/acceptance.mjs",
+    "check:persona": "node scripts/check-persona.mjs",
+    "inspect": "node scripts/inspect.mjs"
+  },
+  "engines": {
+    "node": ">=22",
+    "dsh": ">=0.2.2-rc.3 <0.4.0-0"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "@deepseek-ai/dsh-llm": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}

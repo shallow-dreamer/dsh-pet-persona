@@ -1,0 +1,20 @@
+# dsh-pet-persona：桌宠长期事实记忆（伴生插件，不改 dsh-pet 本体）。
+# enabled: 总开关；false = 注册 no-op provider（recall/capture 都返回 undefined/空操作）。
+# budgetChars: 注入【长期记忆】的字符预算（不是 token；中文 1 字≈1 token），夹在 [200,4000]。
+# autoLearn: capture 时是否自动抽事实。
+# learnEveryTurns: 每多少轮触发一次抽取。
+# idleLearnMs: 距最后一条消息多久算空闲并补抽。
+# maxFacts: 活跃事实上限，超出按 importance/新鲜度归档。
+# model: 抽取用模型，"provider/model" 或只写 model（配合当前服务商）；空 = 宿主默认。
+# dataDir: 事实库目录；空 = <DSH_HOME>/pet-persona。
+- insert:
+    - id: dsh-pet-persona
+      name: dsh-pet-persona
+      config:
+        enabled: true
+        budgetChars: 1200
+        autoLearn: true
+        learnEveryTurns: 6
+        idleLearnMs: 60000
+        maxFacts: 500
+        model: ''
