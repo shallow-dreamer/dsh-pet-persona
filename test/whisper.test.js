@@ -37,6 +37,7 @@ test('首拉只建基线，新气泡才记一条', async () => {
   assert.equal(self.rows.length, 1)
   assert.match(self.rows[0].text, /自己嘟囔了一句：今天风好大/)
   assert.equal(self.rows[0].source, 'whisper')
+  assert.equal(self.rows[0].petId, 'main')
   assert.equal(watch.status().recorded, 1)
 })
 
