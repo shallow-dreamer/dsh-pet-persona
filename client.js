@@ -382,7 +382,7 @@ window.__ModuleLoader__.load({
         const dot = Math.max(-1, Math.min(1, (nx * anchor.x + ny * anchor.y + nz * anchor.z) / len))
         const angle = Math.acos(dot)
         const wobble = 0.05 * Math.sin(4 * Math.atan2(nz, nx) + 2.4 * ny) + 0.04 * Math.sin(7 * ny - 3 * Math.atan2(nz, nx))
-        const score = (angle + wobble) ** 2 - 10 * item.share
+        const score = (angle + wobble) ** 2 - 10 * Math.max(item.share, 0.05)
         if (score < bestScore) { bestScore = score; best = item.key }
       }
       return best
@@ -393,9 +393,9 @@ window.__ModuleLoader__.load({
       return [parseInt(value.slice(0, 2), 16), parseInt(value.slice(2, 4), 16), parseInt(value.slice(4, 6), 16)]
     }
 
-    const drawBrain3D = (canvas, { shares, camera, selected, fusions }) => {
+    const drawBrain3D = (canvas, { shares, camera, selected }) => {
       const ctx = canvas.getContext('2d')
-      if (!ctx) return { faces: [], fusions: [] }
+      if (!ctx) return { faces: [] }
       const W = canvas.width
       const H = canvas.height
       ctx.clearRect(0, 0, W, H)
@@ -464,30 +464,21 @@ window.__ModuleLoader__.load({
         ctx.lineWidth = item.selected ? 1 : 0.9
         ctx.stroke()
       }
-      const fusionHits = []
-      for (const fusion of fusions) {
-        const [a, b] = fusion.key.split('+')
-        const pa = brainProject(a, camera)
-        const pb = brainProject(b, camera)
-        const cx = (pa.sx + pb.sx) / 2
-        const cy = (pa.sy + pb.sy) / 2
-        ctx.save()
-        ctx.setLineDash([2, 6])
-        ctx.strokeStyle = fusion.color
-        ctx.globalAlpha = 0.55
-        ctx.lineWidth = 2
+      for (const item of shares) {
+        if (item.share >= 0.05) continue
+        const site = brainProject(item.key, camera)
+        if (!site) continue
         ctx.beginPath()
-        ctx.moveTo(pa.sx, pa.sy)
-        ctx.lineTo(pb.sx, pb.sy)
-        ctx.stroke()
-        ctx.restore()
-        ctx.beginPath()
-        ctx.ellipse(cx, cy, 10 + Math.sqrt(fusion.count) * 5, (10 + Math.sqrt(fusion.count) * 5) * 0.64, 0, 0, Math.PI * 2)
-        ctx.fillStyle = fusion.color
-        ctx.globalAlpha = 0.2
+        ctx.arc(site.sx, site.sy, 3.4, 0, Math.PI * 2)
+        ctx.fillStyle = item.color
         ctx.fill()
-        ctx.globalAlpha = 1
-        fusionHits.push({ key: fusion.key, cx, cy, rx: 10 + Math.sqrt(fusion.count) * 5, ry: (10 + Math.sqrt(fusion.count) * 5) * 0.64 })
+        ctx.strokeStyle = 'rgba(255,255,255,.75)'
+        ctx.lineWidth = 1
+        ctx.stroke()
+        ctx.font = '600 10px system-ui, "Microsoft YaHei"'
+        ctx.textAlign = 'center'
+        ctx.fillStyle = item.color
+        ctx.fillText(`${item.label} ${Math.round(item.share * 100)}%`, site.sx, site.sy - 7)
       }
       if (selected) {
         const info = shares.find((item) => item.key === selected)
@@ -503,7 +494,7 @@ window.__ModuleLoader__.load({
           ctx.fillText(label, site.sx, site.sy - 4)
         }
       }
-      return { faces: visible, fusions: fusionHits }
+      return { faces: visible }
     }
 
     const pointInPoly = (x, y, points) => {
@@ -1742,15 +1733,13 @@ window.__ModuleLoader__.load({
       })
       const [camera, setCamera] = useState(MAP_CAMERA)
       const [selectedEmotion, setSelectedEmotion] = useState('')
-      const [fusionKey, setFusionKey] = useState('')
       const mapSvgRef = useRef(null)
       const brainCanvasRef = useRef(null)
-      const brainHitsRef = useRef({ faces: [], fusions: [] })
+      const brainHitsRef = useRef({ faces: [] })
       const mapDragRef = useRef(null)
       const mapMovedRef = useRef(false)
       const pickEmotion = (key) => {
         setSelected(null)
-        setFusionKey('')
         setSelectedEmotion((prev) => (prev === key ? '' : key))
       }
       const switchMapMode = (mode) => {
@@ -1838,11 +1827,7 @@ window.__ModuleLoader__.load({
         const canvas = brainCanvasRef.current
         if (!canvas || view !== 'map' || mapMode !== '3d') return
         const { shares } = brainShares(events)
-        const activeKeys = new Set(shares.map((item) => item.key))
-        const fusions = mapClusterFusions(events).filter((fusion) => {
-          return fusion.key.split('+').every((key) => key !== 'calm' && activeKeys.has(key))
-        }).slice(0, 5)
-        brainHitsRef.current = drawBrain3D(canvas, { shares, camera, selected: selectedEmotion, fusions })
+        brainHitsRef.current = drawBrain3D(canvas, { shares, camera, selected: selectedEmotion })
       }, [view, mapMode, camera, selectedEmotion, events])
       const saveInject = async () => {
         setSavingInject(true)
@@ -1947,17 +1932,6 @@ window.__ModuleLoader__.load({
             y: (event.clientY - rect.top) * (canvas.height / rect.height),
           }
           const hits = brainHitsRef.current
-          const fusion = hits.fusions.find((item) => {
-            const dx = (point.x - item.cx) / item.rx
-            const dy = (point.y - item.cy) / item.ry
-            return dx * dx + dy * dy <= 1
-          })
-          if (fusion) {
-            setSelected(null)
-            setSelectedEmotion('')
-            setFusionKey((prev) => (prev === fusion.key ? '' : fusion.key))
-            return
-          }
           for (let index = hits.faces.length - 1; index >= 0; index -= 1) {
             const face = hits.faces[index]
             if (pointInPoly(point.x, point.y, face.points)) {
@@ -1966,24 +1940,6 @@ window.__ModuleLoader__.load({
             }
           }
         }
-        const activeKeys = new Set(shares.map((item) => item.key))
-        const fusionNodes = mapClusterFusions(events).filter((fusion) => {
-          return fusion.key.split('+').every((key) => key !== 'calm' && activeKeys.has(key))
-        }).slice(0, 5).map((fusion) => {
-          const [a, b] = fusion.key.split('+')
-          const pa = brainProject(a, camera)
-          const pb = brainProject(b, camera)
-          return {
-            ...fusion,
-            a,
-            b,
-            pa,
-            pb,
-            sx: (pa.sx + pb.sx) / 2,
-            sy: (pa.sy + pb.sy) / 2,
-            radius: 9 + Math.sqrt(fusion.count) * 6,
-          }
-        })
         const detail = () => {
           if (selectedEmotion) {
             const info = shares.find((item) => item.key === selectedEmotion)
@@ -2018,33 +1974,6 @@ window.__ModuleLoader__.load({
                   h('div', { style: { fontSize: '12px', marginTop: '2px' } }, row.event.text),
                   row.event.quote ? h('div', { style: { ...S.hint, marginTop: '2px' } }, `主人当时说：「${row.event.quote}」`) : null,
                 )),
-            )
-          }
-          if (fusionKey) {
-            const cluster = fusionNodes.find((item) => item.key === fusionKey)
-            if (!cluster) return null
-            return h('div', { style: { ...S.card, background: C.input, marginTop: '6px', marginBottom: 0 } },
-              h('div', { style: { ...S.row, justifyContent: 'space-between' } },
-                h('span', { style: { ...S.chip, color: cluster.color, borderColor: `${cluster.color}88` } },
-                  `${cluster.name} · ${EMO_LABEL[cluster.a]}+${EMO_LABEL[cluster.b]} · ${cluster.count} 条`),
-                h('button', {
-                  type: 'button',
-                  style: { ...S.btn, padding: '2px 9px' },
-                  onClick: () => setFusionKey(''),
-                }, '关闭'),
-              ),
-              h('div', { style: { ...S.hint, margin: '6px 0' } }, '两类情绪同时出现的经历，重叠处就是融合。'),
-              cluster.events.slice(0, 8).map((event, index) => h('div', {
-                key: event.id || `${event.createdAt}-${index}`,
-                style: { padding: '6px 0', borderBottom: `1px solid ${C.border}55` },
-              },
-                h('div', { style: { ...S.row, justifyContent: 'space-between' } },
-                  h('span', { style: S.hint }, emotionText(event)),
-                  h('span', { style: S.hint }, fmtTime(event.createdAt)),
-                ),
-                h('div', { style: { fontSize: '12px', marginTop: '2px' } }, event.text),
-                event.quote ? h('div', { style: { ...S.hint, marginTop: '2px' } }, `主人当时说：「${event.quote}」`) : null,
-              )),
             )
           }
           return null
@@ -2096,7 +2025,7 @@ window.__ModuleLoader__.load({
             )),
           ),
           h('div', { style: { ...S.hint, marginTop: '4px' } },
-            `每种情绪像一层有颜色的水，一起填满整个脑壳：面积约等于它在全部情绪权重里的占比（共 ${events.length} 条经历；平静是底色，不计入占比）；交界处只轻微相融、不会完全混成一色，虚线表示两类情绪最近同时出现。拖动旋转、滚轮缩放、双击复位；点色块或下方标签查看这类情绪的对话。`),
+            `每种情绪像一层有颜色的水，一起填满整个脑壳：面积约等于它在全部情绪权重里的占比（共 ${events.length} 条经历；平静是底色，不计入占比）；多种情绪的经历会分别计入各情绪占比，主图不再画融合；拖动旋转、滚轮缩放、双击复位，点色块或下方标签查看这类情绪的对话。`),
           h('div', { style: { ...S.hint, marginTop: '2px' } },
             '脑区位置：伏隔核=开心 · 岛叶=亲近 · 前扣带=难过 · 杏仁核=生气 · 杏仁核前部=担心 · 脑干=疲惫 · 蓝斑=惊讶 · 内侧前额叶=平静。'),
           detail(),
