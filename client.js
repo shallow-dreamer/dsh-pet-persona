@@ -76,7 +76,7 @@ window.__ModuleLoader__.load({
       'anxiety+surprise': '#d09ac8',
       'calm+joy': '#a8d8b0',
     }
-    const MAP_CAMERA = { rotX: -10, rotY: 16, zoom: 1.3 }
+    const MAP_CAMERA = { rotX: -8, rotY: 14, zoom: 1.05 }
     const MAP_RADIUS = 180
 
     const mapHash32 = (value) => {
@@ -306,6 +306,43 @@ window.__ModuleLoader__.load({
       if (!anchor) return mapProject(0, 0, 0, camera)
       return mapProject(anchor.x * MAP_RADIUS, anchor.y * MAP_RADIUS, anchor.z * MAP_RADIUS, camera)
     }
+
+    // —— 脑壳（风格化侧视轮廓）与「情绪像水填满脑壳」的加权 Voronoi 色块 ——
+    const BRAIN_PATH = 'M 150 300 C 140 255 150 215 175 190 C 175 150 210 120 255 115 C 285 85 340 80 380 100 C 425 90 470 110 485 150 C 515 175 520 215 505 245 C 520 275 505 305 480 315 C 470 345 440 365 405 368 L 380 368 C 365 395 335 405 310 392 C 295 382 280 380 265 388 C 240 405 205 398 190 375 C 165 378 140 355 132 330 C 118 322 112 310 120 302 Z'
+    const BRAIN_STEM = 'M 372 360 C 372 395 362 420 348 438 C 340 448 352 456 362 448 C 378 432 390 400 390 366 Z'
+    const BRAIN_CEREBELLUM = { cx: 455, cy: 352, rx: 52, ry: 30 }
+    const polyPath = (poly) => {
+      if (!poly || poly.length < 3) return 'M 0 0'
+      return poly.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ') + ' Z'
+    }
+    const clipHalfPlane = (poly, ax, ay, b) => {
+      if (!poly.length) return poly
+      const out = []
+      for (let i = 0; i < poly.length; i += 1) {
+        const p = poly[i]
+        const q = poly[(i + 1) % poly.length]
+        const dp = ax * p[0] + ay * p[1] - b
+        const dq = ax * q[0] + ay * q[1] - b
+        if (dp <= 0) out.push(p)
+        if ((dp < 0 && dq > 0) || (dp > 0 && dq < 0)) {
+          const t = dp / (dp - dq)
+          out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t])
+        }
+      }
+      return out
+    }
+    const voronoiCells = (sites) => sites.map((site, index) => {
+      let poly = [[-260, -220], [900, -220], [900, 780], [-260, 780]]
+      sites.forEach((other, otherIndex) => {
+        if (index === otherIndex) return
+        const ax = 2 * (other.sx - site.sx)
+        const ay = 2 * (other.sy - site.sy)
+        if (ax === 0 && ay === 0) return
+        const b = other.sx * other.sx + other.sy * other.sy - site.sx * site.sx - site.sy * site.sy + site.weight - other.weight
+        poly = clipHalfPlane(poly, ax, ay, b)
+      })
+      return { ...site, d: polyPath(poly) }
+    })
 
 
     const S = {
@@ -1677,18 +1714,13 @@ window.__ModuleLoader__.load({
           callback()
         }
         const percent = (value) => (value > 0 && value < 0.005 ? '<1%' : `${Math.round(value * 100)}%`)
-        const regionNodes = shares.map((item) => {
-          const center = brainProject(item.key, camera)
-          const radius = (12 + Math.sqrt(item.share) * 86) * center.scale
-          return { ...item, ...center, radius }
-        }).sort((a, b) => a.depth - b.depth)
-        const shellRadius = 0.66 * MAP_RADIUS
-        const cerebrum = project(0, 0, 0)
-        const cerebellum = project(0, -0.6 * MAP_RADIUS, -0.46 * MAP_RADIUS)
-        const brainstemTop = project(0, -0.48 * MAP_RADIUS, -0.28 * MAP_RADIUS)
-        const brainstemBottom = project(0, -0.98 * MAP_RADIUS, -0.38 * MAP_RADIUS)
-        const midTop = project(0, 0.62 * MAP_RADIUS, 0)
-        const midBottom = project(0, -0.42 * MAP_RADIUS, 0)
+        const sites = shares.map((item) => ({
+          ...item,
+          ...brainProject(item.key, camera),
+          weight: item.share * 90000,
+        }))
+        const cells = voronoiCells(sites)
+        const siteOf = (key) => sites.find((site) => site.key === key)
         const activeKeys = new Set(shares.map((item) => item.key))
         const fusionNodes = mapClusterFusions(events).filter((fusion) => {
           return fusion.key.split('+').every((key) => key !== 'calm' && activeKeys.has(key))
@@ -1792,73 +1824,83 @@ window.__ModuleLoader__.load({
             role: 'img',
             'aria-label': '三维情绪脑区图',
           },
-            h('defs', null, regionNodes.map((item) => h('radialGradient', {
-              key: item.key,
-              id: `brain-${item.key}`,
-              cx: '50%',
-              cy: '50%',
-              r: '50%',
-            },
-              h('stop', { offset: '0%', stopColor: item.color, stopOpacity: 0.7 }),
-              h('stop', { offset: '55%', stopColor: item.color, stopOpacity: 0.42 }),
-              h('stop', { offset: '100%', stopColor: item.color, stopOpacity: 0 }),
-            ))),
-            h('g', { opacity: 0.95 },
-              h('ellipse', {
-                cx: cerebrum.sx,
-                cy: cerebrum.sy,
-                rx: shellRadius * cerebrum.scale * 1.04,
-                ry: shellRadius * cerebrum.scale * 0.86,
-                fill: '#8fa6c8',
-                opacity: 0.07,
-                stroke: '#8fa6c8',
-                strokeOpacity: 0.32,
-                strokeWidth: 1.3,
-              }),
-              h('line', {
-                x1: cerebrum.sx,
-                y1: cerebrum.sy - shellRadius * cerebrum.scale * 0.8,
-                x2: cerebrum.sx,
-                y2: cerebrum.sy + shellRadius * cerebrum.scale * 0.8,
-                stroke: '#8fa6c8',
-                strokeOpacity: 0.2,
-                strokeWidth: 1,
-                strokeDasharray: '3 6',
-              }),
-              [-0.5, -0.18, 0.18, 0.5].flatMap((offset) => [-1, 1].map((side) => {
-                const rx = shellRadius * cerebrum.scale * 1.04
-                const ry = shellRadius * cerebrum.scale * 0.86
-                const half = rx * Math.sqrt(Math.max(0, 1 - offset * offset)) * 0.8
-                return h('path', {
-                  key: `gyri-${side}-${offset}`,
-                  d: `M ${cerebrum.sx + side * rx * 0.05} ${cerebrum.sy + ry * offset} q ${side * half * 0.42} ${-ry * 0.07} ${side * half * 0.8} 0`,
-                  fill: 'none',
-                  stroke: '#8fa6c8',
-                  strokeOpacity: 0.13,
-                  strokeWidth: 1,
-                })
-              })),
-              h('ellipse', {
-                cx: cerebellum.sx,
-                cy: cerebellum.sy,
-                rx: 0.26 * shellRadius * cerebellum.scale,
-                ry: 0.1 * shellRadius * cerebellum.scale,
-                fill: '#8fa6c8',
-                opacity: 0.07,
-                stroke: '#8fa6c8',
-                strokeOpacity: 0.24,
-                strokeWidth: 1,
-              }),
-              h('line', {
-                x1: brainstemTop.sx,
-                y1: brainstemTop.sy,
-                x2: brainstemBottom.sx,
-                y2: brainstemBottom.sy,
-                stroke: '#8fa6c8',
-                strokeOpacity: 0.22,
-                strokeWidth: 8,
+            h('defs', null,
+              sites.map((site) => h('radialGradient', {
+                key: `fluid-${site.key}`,
+                id: `fluid-${site.key}`,
+                gradientUnits: 'userSpaceOnUse',
+                cx: site.sx,
+                cy: site.sy,
+                r: 150 * site.scale,
+              },
+                h('stop', { offset: '0%', stopColor: site.color, stopOpacity: 0.98 }),
+                h('stop', { offset: '62%', stopColor: site.color, stopOpacity: 0.9 }),
+                h('stop', { offset: '100%', stopColor: site.color, stopOpacity: 0.8 }),
+              )),
+              h('clipPath', { id: 'brain-clip' },
+                h('path', { d: BRAIN_PATH }),
+                h('ellipse', BRAIN_CEREBELLUM),
+                h('path', { d: BRAIN_STEM }),
+              ),
+              h('filter', { id: 'brain-fluid', x: '-20%', y: '-20%', width: '140%', height: '140%' },
+                h('feGaussianBlur', { stdDeviation: 3 }),
+              ),
+              h('radialGradient', { id: 'brain-vignette', cx: '50%', cy: '45%', r: '65%' },
+                h('stop', { offset: '55%', stopColor: '#000', stopOpacity: 0 }),
+                h('stop', { offset: '100%', stopColor: '#050a12', stopOpacity: 0.6 }),
+              ),
+              h('radialGradient', { id: 'brain-light', cx: '50%', cy: '50%', r: '50%' },
+                h('stop', { offset: '0%', stopColor: '#fff', stopOpacity: 0.14 }),
+                h('stop', { offset: '100%', stopColor: '#fff', stopOpacity: 0 }),
+              ),
+            ),
+            h('g', { clipPath: 'url(#brain-clip)' },
+              h('path', { d: BRAIN_PATH, fill: '#0e1624' }),
+              h('g', { filter: 'url(#brain-fluid)' },
+                cells.map((cell) => h('path', {
+                  key: `cell-${cell.key}`,
+                  d: cell.d,
+                  fill: `url(#fluid-${cell.key})`,
+                  onClick: pick(() => pickEmotion(cell.key)),
+                  style: { cursor: 'pointer' },
+                  role: 'button',
+                  'aria-label': `${cell.label} ${percent(cell.share)}`,
+                })),
+              ),
+              ['M 205 200 q 45 -22 85 -6 q 40 16 78 -4', 'M 175 250 q 55 -16 95 4 q 40 20 82 2', 'M 205 300 q 45 18 88 2 q 45 -16 85 6', 'M 300 150 q 40 -18 75 -2 q 30 14 62 -2'].map((d, index) => h('path', {
+                key: `gyri-${index}`,
+                d,
+                fill: 'none',
+                stroke: '#0a1220',
+                strokeOpacity: 0.16,
+                strokeWidth: 2.4,
                 strokeLinecap: 'round',
-              }),
+              })),
+              h('path', { d: BRAIN_PATH, fill: 'url(#brain-vignette)' }),
+              h('ellipse', { cx: 250, cy: 160, rx: 150, ry: 90, fill: 'url(#brain-light)' }),
+            ),
+            h('path', { d: BRAIN_PATH, fill: 'none', stroke: '#8fa6c8', strokeOpacity: 0.45, strokeWidth: 1.6 }),
+            h('ellipse', { ...BRAIN_CEREBELLUM, fill: 'none', stroke: '#8fa6c8', strokeOpacity: 0.35, strokeWidth: 1.2 }),
+            h('path', { d: BRAIN_STEM, fill: 'none', stroke: '#8fa6c8', strokeOpacity: 0.35, strokeWidth: 1.2 }),
+            h('g', { clipPath: 'url(#brain-clip)', style: { pointerEvents: 'none' } },
+              cells.filter((cell) => cell.key === selectedEmotion).map((cell) => h('path', {
+                key: `outline-${cell.key}`,
+                d: cell.d,
+                fill: 'none',
+                stroke: C.text,
+                strokeWidth: 2.2,
+                strokeOpacity: 0.9,
+              })),
+              cells.filter((cell) => cell.key === selectedEmotion).map((cell) => h('text', {
+                key: `label-${cell.key}`,
+                x: cell.sx,
+                y: cell.sy - 2,
+                textAnchor: 'middle',
+                fill: C.text,
+                fontSize: 13,
+                fontWeight: 700,
+                style: { paintOrder: 'stroke', stroke: 'rgba(8,14,24,.75)', strokeWidth: 3 },
+              }, `${cell.label} ${percent(cell.share)}`)),
             ),
             fusionNodes.map((fusion) => h('line', {
               key: `bridge-${fusion.key}`,
@@ -1871,30 +1913,7 @@ window.__ModuleLoader__.load({
               strokeDasharray: '2 6',
               opacity: 0.4,
             })),
-            regionNodes.map((item) => h('g', {
-              key: item.key,
-              style: { cursor: 'pointer' },
-              onClick: pick(() => pickEmotion(item.key)),
-              role: 'button',
-              'aria-label': `${item.label} ${percent(item.share)}`,
-            },
-              h('circle', { cx: item.sx, cy: item.sy, r: item.radius, fill: `url(#brain-${item.key})` }),
-              h('circle', { cx: item.sx, cy: item.sy, r: item.radius * 0.48, fill: item.color, opacity: 0.1 }),
-              item.key === selectedEmotion
-                ? h('circle', { cx: item.sx, cy: item.sy, r: item.radius, fill: 'none', stroke: C.text, strokeWidth: 1.6 })
-                : null,
-              item.key === selectedEmotion
-                ? h('text', {
-                  x: item.sx,
-                  y: item.sy - 1,
-                  textAnchor: 'middle',
-                  fill: C.text,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  style: { paintOrder: 'stroke', stroke: 'rgba(8,14,24,.72)', strokeWidth: 3 },
-                }, `${item.label} ${percent(item.share)}`)
-                : null,
-            )),
+
             fusionNodes.map((fusion) => h('g', {
               key: `fusion-${fusion.key}`,
               style: { cursor: 'pointer' },
@@ -1945,7 +1964,7 @@ window.__ModuleLoader__.load({
             )),
           ),
           h('div', { style: { ...S.hint, marginTop: '4px' } },
-            `色块大小是这类情绪在全部情绪权重里的占比（共 ${events.length} 条经历；平静是底色，不计入占比）；重叠的色块和虚线表示两类情绪同时出现、互相融合。拖动旋转、滚轮缩放、双击复位；点色块或下方标签查看这类情绪的对话。`),
+            `每种情绪像一层有颜色的水，一起填满整个脑壳：面积约等于它在全部情绪权重里的占比（共 ${events.length} 条经历；平静是底色，不计入占比）；交界处只轻微相融、不会完全混成一色，虚线表示两类情绪最近同时出现。拖动旋转、滚轮缩放、双击复位；点色块或下方标签查看这类情绪的对话。`),
           h('div', { style: { ...S.hint, marginTop: '2px' } },
             '脑区位置：伏隔核=开心 · 岛叶=亲近 · 前扣带=难过 · 杏仁核=生气 · 杏仁核前部=担心 · 脑干=疲惫 · 蓝斑=惊讶 · 内侧前额叶=平静。'),
           detail(),
