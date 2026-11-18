@@ -2,7 +2,7 @@
 
 版本：v0.3（2026-11-18）
 状态：P1/P2 已实现；多情绪模型 v0.11.0 已实现并安装（124/124 单测）；P3 见 `docs/self-roadmap.md`
-关联：`docs/self-roadmap.md`、`docs/butler-plan.md`、`docs/voice-plan.md`、`SPEC.md`
+关联：`docs/self-roadmap.md`、`docs/mindmap-3d-plan.md`（脑图 3D 化）、`docs/butler-plan.md`、`docs/voice-plan.md`、`SPEC.md`
 
 ## 1. 问题
 

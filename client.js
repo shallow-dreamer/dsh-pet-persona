@@ -33,6 +33,281 @@ window.__ModuleLoader__.load({
     }
     const typeMeta = (type) => TYPE_META[type] || { label: '事实', color: '#9aa4b2' }
 
+    // —— 「它自己」3D 情绪球 ——
+    // 锚点/阈值与 lib/emotion-space.js 保持一致；客户端 chunk 不能 import 服务端模块，所以这里保留一份渲染副本。
+    const EMO_ORDER = ['joy', 'affection', 'sadness', 'anger', 'anxiety', 'tiredness', 'surprise', 'calm']
+    const EMO_LABEL = { joy: '开心', affection: '亲近', sadness: '难过', anger: '生气', anxiety: '担心', tiredness: '疲惫', surprise: '惊讶', calm: '平静' }
+    const EMO_COLOR = { joy: '#59d18b', affection: '#f08ab0', sadness: '#6aa9ff', anger: '#ff6b7a', anxiety: '#b98bff', tiredness: '#e8c15a', surprise: '#ff9f6b', calm: '#9aa4b2' }
+    const MAP_ANCHORS = {
+      joy: { x: 0.1, y: 0.9, z: 0.35 },
+      affection: { x: 0.85, y: 0.35, z: 0.25 },
+      sadness: { x: -0.1, y: -0.85, z: -0.45 },
+      anger: { x: -0.85, y: 0.45, z: 0.2 },
+      anxiety: { x: -0.2, y: 0.15, z: -0.9 },
+      tiredness: { x: 0.1, y: -0.8, z: 0.3 },
+      surprise: { x: 0.2, y: 0.7, z: -0.55 },
+      calm: { x: 0, y: 0, z: 0 },
+    }
+    const MAP_FUSIONS = {
+      'joy+tiredness': '满足的累',
+      'anger+sadness': '委屈',
+      'affection+anxiety': '舍不得',
+      'affection+joy': '甜甜的亲近',
+      'affection+sadness': '心疼',
+      'anger+anxiety': '又慌又气',
+      'joy+surprise': '惊喜',
+      'calm+tiredness': '放空',
+      'anger+tiredness': '烦躁',
+      'sadness+tiredness': '低落',
+      'anxiety+surprise': '一惊',
+      'calm+joy': '安心开心',
+    }
+    const MAP_FUSION_COLORS = {
+      'joy+tiredness': '#b9d97a',
+      'anger+sadness': '#b07d9a',
+      'affection+anxiety': '#d79ac0',
+      'affection+joy': '#f0a8b8',
+      'affection+sadness': '#b9a0d8',
+      'anger+anxiety': '#c97a9e',
+      'joy+surprise': '#ffc46b',
+      'calm+tiredness': '#b8bda8',
+      'anger+tiredness': '#d09a6a',
+      'sadness+tiredness': '#8f9bc0',
+      'anxiety+surprise': '#d09ac8',
+      'calm+joy': '#a8d8b0',
+    }
+    const MAP_CAMERA = { rotX: -10, rotY: 16, zoom: 1.3 }
+    const MAP_RADIUS = 180
+
+    const mapHash32 = (value) => {
+      const text = String(value ?? '')
+      let hash = 2166136261
+      for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index)
+        hash = Math.imul(hash, 16777619)
+      }
+      return hash >>> 0
+    }
+
+    const mapScores = (event) => {
+      const scores = {}
+      const list = Array.isArray(event?.emotions) ? event.emotions : []
+      for (const item of list) {
+        const key = item?.key
+        const score = Number(item?.score)
+        if (!key || !(key in MAP_ANCHORS) || !Number.isFinite(score)) continue
+        scores[key] = Math.max(scores[key] || 0, Math.min(1, score))
+      }
+      if (Object.keys(scores).length > 0) return scores
+      const valence = Number(event?.valence) || 0
+      const energy = Number.isFinite(Number(event?.energy)) ? Number(event.energy) : 0.5
+      if (valence > 0.05) scores.joy = Math.min(1, valence)
+      else if (valence < -0.05) scores.sadness = Math.min(1, -valence)
+      if (energy > 0.6) scores.surprise = Math.min(1, (energy - 0.6) * 2)
+      else if (energy < 0.4) scores.tiredness = Math.min(1, (0.4 - energy) * 2)
+      if (Object.keys(scores).length === 0) scores.calm = 0.55
+      return scores
+    }
+
+    const mapPosition = (event, jitter = true) => {
+      const scores = mapScores(event)
+      let vx = 0
+      let vy = 0
+      let vz = 0
+      let max = 0
+      let sum = 0
+      for (const [key, score] of Object.entries(scores)) {
+        if (key === 'calm' || score <= 0.08) continue
+        const anchor = MAP_ANCHORS[key]
+        vx += anchor.x * score
+        vy += anchor.y * score
+        vz += anchor.z * score
+        sum += score
+        if (score > max) max = score
+      }
+      const length = Math.hypot(vx, vy, vz)
+      const dominant = Object.entries(scores)
+        .filter(([key, score]) => key !== 'calm' && score > 0.08)
+        .sort((a, b) => b[1] - a[1])[0]?.[0] || 'calm'
+      if (length < 1e-4) return { x: 0, y: 0, z: 0, strength: 0, dominant }
+      const hash = mapHash32(event?.id || `${event?.createdAt || ''}|${event?.text || ''}`)
+      const pick = (shift) => (((hash >>> shift) & 0xff) / 255) * 2 - 1
+      const strength = Math.min(1, max + 0.25 * Math.max(0, sum - max))
+      const magnitude = strength * 0.9
+      return {
+        x: (vx / length) * magnitude + (jitter ? pick(0) * 0.03 : 0),
+        y: (vy / length) * magnitude + (jitter ? pick(8) * 0.03 : 0),
+        z: (vz / length) * magnitude + (jitter ? pick(16) * 0.03 : 0),
+        strength,
+        dominant,
+      }
+    }
+
+    const mapFusionName = (a, b) => {
+      const key = [a, b].sort().join('+')
+      return MAP_FUSIONS[key] || `${EMO_LABEL[a] || a}里带点${EMO_LABEL[b] || b}`
+    }
+
+    const mapFusionPairs = (event) => {
+      const items = Object.entries(mapScores(event))
+        .filter(([, score]) => score >= 0.25)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 4)
+      const pairs = []
+      for (let i = 0; i < items.length; i += 1) {
+        for (let j = i + 1; j < items.length; j += 1) {
+          const [a, scoreA] = items[i]
+          const [b, scoreB] = items[j]
+          if (scoreB < scoreA * 0.5) continue
+          const key = [a, b].sort().join('+')
+          pairs.push({ key, a, b, name: mapFusionName(a, b), color: MAP_FUSION_COLORS[key] || EMO_COLOR[a] })
+        }
+      }
+      return pairs
+    }
+
+    const mapClusterFusions = (events, now = Date.now()) => {
+      const groups = new Map()
+      const cutoff = now - 168 * 3600 * 1000
+      for (const event of events) {
+        const created = Date.parse(event?.createdAt || '')
+        if (Number.isFinite(created) && created < cutoff) continue
+        const position = mapPosition(event, false)
+        for (const pair of mapFusionPairs(event)) {
+          if (!groups.has(pair.key)) groups.set(pair.key, { pair, items: [] })
+          groups.get(pair.key).items.push({ event, position })
+        }
+      }
+      const fusions = []
+      for (const { pair, items } of groups.values()) {
+        const buckets = []
+        for (const item of items) {
+          let bucket = buckets.find((candidate) => Math.hypot(
+            item.position.x - candidate.cx,
+            item.position.y - candidate.cy,
+            item.position.z - candidate.cz,
+          ) < 0.35)
+          if (!bucket) {
+            bucket = { cx: item.position.x, cy: item.position.y, cz: item.position.z, items: [] }
+            buckets.push(bucket)
+          }
+          bucket.items.push(item)
+          bucket.cx += (item.position.x - bucket.cx) / bucket.items.length
+          bucket.cy += (item.position.y - bucket.cy) / bucket.items.length
+          bucket.cz += (item.position.z - bucket.cz) / bucket.items.length
+        }
+        for (const bucket of buckets) {
+          if (bucket.items.length < 2) continue
+          fusions.push({
+            key: pair.key,
+            name: pair.name,
+            color: pair.color,
+            count: bucket.items.length,
+            events: bucket.items.map((item) => item.event),
+            x: bucket.cx,
+            y: bucket.cy,
+            z: bucket.cz,
+          })
+        }
+      }
+      return fusions.sort((a, b) => b.count - a.count)
+    }
+
+    const mapProject = (x, y, z, camera) => {
+      const radX = ((camera?.rotX ?? -12) * Math.PI) / 180
+      const radY = ((camera?.rotY ?? 18) * Math.PI) / 180
+      const cosY = Math.cos(radY)
+      const sinY = Math.sin(radY)
+      const cosX = Math.cos(radX)
+      const sinX = Math.sin(radX)
+      const x1 = x * cosY + z * sinY
+      const z1 = -x * sinY + z * cosY
+      const y1 = y
+      const y2 = y1 * cosX - z1 * sinX
+      const z2 = y1 * sinX + z1 * cosX
+      const scale = (520 / Math.max(1, 520 + z2)) * (camera?.zoom ?? 1)
+      return {
+        sx: 320 + x1 * scale,
+        sy: 270 - y2 * scale,
+        depth: z2,
+        scale,
+        opacity: Math.max(0.35, Math.min(1, 0.75 + (0.25 * -z2) / MAP_RADIUS)),
+      }
+    }
+
+    const mapLayout = (events, camera) => {
+      const points = events.map((event, index) => {
+        const position = mapPosition(event)
+        const projected = mapProject(position.x * MAP_RADIUS, position.y * MAP_RADIUS, position.z * MAP_RADIUS, camera)
+        return {
+          event,
+          index,
+          ...projected,
+          strength: position.strength,
+          color: EMO_COLOR[position.dominant] || EMO_COLOR.calm,
+          showLabel: index < 8,
+        }
+      }).sort((a, b) => b.depth - a.depth)
+      const fusions = mapClusterFusions(events).map((fusion) => ({
+        ...fusion,
+        ...mapProject(fusion.x * MAP_RADIUS, fusion.y * MAP_RADIUS, fusion.z * MAP_RADIUS, camera),
+      })).sort((a, b) => b.depth - a.depth)
+      return { points, fusions }
+    }
+
+    // —— 脑区视图：情绪不是孤立的点，而是落在大脑解剖区域里的软色块 ——
+    const BRAIN_REGIONS = {
+      joy: { x: 0.42, y: 0.22, z: 0.52, area: '伏隔核' },
+      affection: { x: 0.6, y: 0.02, z: 0.18, area: '岛叶' },
+      sadness: { x: -0.24, y: -0.16, z: 0.42, area: '前扣带' },
+      anger: { x: -0.55, y: -0.3, z: 0.04, area: '杏仁核' },
+      anxiety: { x: 0.54, y: -0.14, z: -0.2, area: '杏仁核前部' },
+      tiredness: { x: 0, y: -0.66, z: -0.3, area: '脑干' },
+      surprise: { x: 0.4, y: 0.44, z: -0.44, area: '蓝斑' },
+      calm: { x: 0, y: 0.28, z: 0.04, area: '内侧前额叶' },
+    }
+
+    const brainShares = (events) => {
+      const sums = {}
+      let total = 0
+      for (const event of events) {
+        for (const [key, score] of Object.entries(mapScores(event))) {
+          // 平静是底色，不参与情绪占比；否则默认值会把整张图压成灰色。
+          if (key === 'calm' || !(key in BRAIN_REGIONS) || score <= 0.08) continue
+          sums[key] = (sums[key] || 0) + score
+          total += score
+        }
+      }
+      if (total <= 0) {
+        let calm = 0
+        for (const event of events) calm += Number(mapScores(event).calm || 0)
+        return {
+          shares: calm > 0
+            ? [{ key: 'calm', label: EMO_LABEL.calm, color: EMO_COLOR.calm, area: BRAIN_REGIONS.calm.area, share: 1 }]
+            : [],
+          total: 0,
+        }
+      }
+      const shares = EMO_ORDER
+        .filter((key) => key !== 'calm' && (sums[key] || 0) > 0)
+        .map((key) => ({
+          key,
+          label: EMO_LABEL[key],
+          color: EMO_COLOR[key],
+          area: BRAIN_REGIONS[key].area,
+          share: total > 0 ? sums[key] / total : 0,
+        }))
+        .sort((a, b) => b.share - a.share)
+      return { shares, total }
+    }
+
+    const brainProject = (key, camera) => {
+      const anchor = BRAIN_REGIONS[key]
+      if (!anchor) return mapProject(0, 0, 0, camera)
+      return mapProject(anchor.x * MAP_RADIUS, anchor.y * MAP_RADIUS, anchor.z * MAP_RADIUS, camera)
+    }
+
+
     const S = {
       page: { maxWidth: '980px', color: C.text, paddingBottom: '32px' },
       header: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' },
@@ -1210,9 +1485,32 @@ window.__ModuleLoader__.load({
       const [previewing, setPreviewing] = useState(false)
       const [savingInject, setSavingInject] = useState(false)
       const [injectError, setInjectError] = useState('')
-      const EMO_ORDER = ['joy', 'affection', 'sadness', 'anger', 'anxiety', 'tiredness', 'surprise', 'calm']
-      const EMO_LABEL = { joy: '开心', affection: '亲近', sadness: '难过', anger: '生气', anxiety: '担心', tiredness: '疲惫', surprise: '惊讶', calm: '平静' }
-      const EMO_COLOR = { joy: '#59d18b', affection: '#f08ab0', sadness: '#6aa9ff', anger: '#ff6b7a', anxiety: '#b98bff', tiredness: '#e8c15a', surprise: '#ff9f6b', calm: '#9aa4b2' }
+      const [mapMode, setMapMode] = useState(() => {
+        try {
+          return localStorage.getItem('dsh-pet-persona.selfMapMode') === '2d' ? '2d' : '3d'
+        } catch {
+          return '3d'
+        }
+      })
+      const [camera, setCamera] = useState(MAP_CAMERA)
+      const [selectedEmotion, setSelectedEmotion] = useState('')
+      const [fusionKey, setFusionKey] = useState('')
+      const mapSvgRef = useRef(null)
+      const mapDragRef = useRef(null)
+      const mapMovedRef = useRef(false)
+      const pickEmotion = (key) => {
+        setSelected(null)
+        setFusionKey('')
+        setSelectedEmotion((prev) => (prev === key ? '' : key))
+      }
+      const switchMapMode = (mode) => {
+        setMapMode(mode)
+        try {
+          localStorage.setItem('dsh-pet-persona.selfMapMode', mode)
+        } catch {
+          // localStorage 不可用时只影响记忆，不影响本次切换。
+        }
+      }
       const emotionOfEvent = (event) => {
         const list = Array.isArray(event?.emotions) ? event.emotions : []
         if (list.length > 0) {
@@ -1236,7 +1534,7 @@ window.__ModuleLoader__.load({
         }))
         .filter((group) => group.items.length > 0)
       const mapNodes = []
-      if (view === 'map' && groupList.length > 0) {
+      if (view === 'map' && mapMode === '2d' && groupList.length > 0) {
         const n = groupList.length
         groupList.forEach((group, groupIndex) => {
           const angle = (-90 + (groupIndex * 360) / n) * (Math.PI / 180)
@@ -1273,6 +1571,19 @@ window.__ModuleLoader__.load({
         }
       }
       useEffect(() => { void loadPreview() }, [])
+      useEffect(() => {
+        const element = mapSvgRef.current
+        if (!element || view !== 'map' || mapMode !== '3d') return undefined
+        const onWheel = (event) => {
+          event.preventDefault()
+          setCamera((prev) => ({
+            ...prev,
+            zoom: Math.max(0.55, Math.min(2.4, prev.zoom * (event.deltaY > 0 ? 0.92 : 1.08))),
+          }))
+        }
+        element.addEventListener('wheel', onWheel, { passive: false })
+        return () => element.removeEventListener('wheel', onWheel)
+      }, [view, mapMode])
       const saveInject = async () => {
         setSavingInject(true)
         setInjectError('')
@@ -1294,6 +1605,352 @@ window.__ModuleLoader__.load({
           style: { ...S.btn, opacity: view === mode ? 1 : 0.55, padding: '4px 10px' },
         }, mode === 'map' ? '脑图' : '时间线')),
       )
+      const mapSelectedCard = selected
+        ? h('div', { style: { ...S.card, background: C.input, marginTop: '4px', marginBottom: 0 } },
+          h('div', { style: { ...S.row, justifyContent: 'space-between' } },
+            h('span', { style: { ...S.chip, color: selected.valence >= 0 ? C.ok : C.danger } },
+              `${kindLabel[selected.kind] || '经历'} · ${emotionText(selected)}`),
+            selected.source && selected.source !== 'chat'
+              ? h('span', { style: S.chip },
+                selected.source === 'autonomy' ? '自主决定'
+                  : selected.source === 'whisper' ? '自言自语'
+                    : '自主执行')
+              : null,
+            h('span', { style: S.hint }, fmtTime(selected.createdAt)),
+          ),
+          h('div', { style: { fontSize: '12px', marginTop: '4px' } }, selected.text),
+          selected.quote ? h('div', { style: { ...S.hint, marginTop: '2px' } }, `主人当时说：「${selected.quote}」`) : null,
+        )
+        : null
+      const render2D = () => h('div', null,
+        h('svg', { viewBox: '-320 -270 640 540', style: { width: '100%', height: '430px', display: 'block' } },
+          h('circle', { cx: 0, cy: 0, r: 44, fill: C.input, stroke: C.border }),
+          h('text', { x: 0, y: -2, textAnchor: 'middle', fill: C.text, fontSize: 15, fontWeight: 700 }, '我'),
+          h('text', { x: 0, y: 16, textAnchor: 'middle', fill: C.faint, fontSize: 10 }, `${events.length} 条`),
+          mapNodes.filter((node) => node.type === 'branch').map((node) => h('g', { key: `b-${node.key}` },
+            h('line', { x1: 0, y1: 0, x2: node.x, y2: node.y, stroke: node.color, strokeWidth: 1.4, opacity: 0.55 }),
+            h('circle', { cx: node.x, cy: node.y, r: 24, fill: `${node.color}33`, stroke: node.color, strokeWidth: 1.5 }),
+            h('text', { x: node.x, y: node.y + 4, textAnchor: 'middle', fill: C.text, fontSize: 12, fontWeight: 700 }, node.label),
+            h('text', { x: node.x, y: node.y + 34, textAnchor: 'middle', fill: C.faint, fontSize: 10 }, `${node.count} 条`),
+          )),
+          mapNodes.filter((node) => node.type === 'leaf').map((node) => h('g', {
+            key: `l-${node.key}`,
+            style: { cursor: 'pointer' },
+            onClick: () => setSelected(node.event),
+          },
+            h('line', { x1: 0, y1: 0, x2: node.x, y2: node.y, stroke: node.color, strokeWidth: 0.6, opacity: 0.16 }),
+            h('circle', { cx: node.x, cy: node.y, r: 5, fill: node.color }),
+            h('text', {
+              x: node.x + (node.x >= 0 ? 9 : -9),
+              y: node.y + 4,
+              textAnchor: node.x >= 0 ? 'start' : 'end',
+              fill: C.text,
+              fontSize: 10,
+            }, String(node.event.text || '').slice(0, 9)),
+          )),
+        ),
+      )
+      const render3D = () => {
+        const { shares } = brainShares(events)
+        const project = (x, y, z) => mapProject(x, y, z, camera)
+        const pointerDown = (event) => {
+          mapDragRef.current = { x: event.clientX, y: event.clientY, rotX: camera.rotX, rotY: camera.rotY }
+          mapMovedRef.current = false
+          event.currentTarget.setPointerCapture?.(event.pointerId)
+        }
+        const pointerMove = (event) => {
+          const drag = mapDragRef.current
+          if (!drag) return
+          const dx = event.clientX - drag.x
+          const dy = event.clientY - drag.y
+          if (Math.hypot(dx, dy) > 4) mapMovedRef.current = true
+          if (!mapMovedRef.current) return
+          setCamera((prev) => ({
+            ...prev,
+            rotY: drag.rotY + dx * 0.35,
+            rotX: Math.max(-80, Math.min(80, drag.rotX + dy * 0.35)),
+          }))
+        }
+        const pointerUp = () => { mapDragRef.current = null }
+        const pick = (callback) => () => {
+          if (mapMovedRef.current) return
+          callback()
+        }
+        const percent = (value) => (value > 0 && value < 0.005 ? '<1%' : `${Math.round(value * 100)}%`)
+        const regionNodes = shares.map((item) => {
+          const center = brainProject(item.key, camera)
+          const radius = (12 + Math.sqrt(item.share) * 86) * center.scale
+          return { ...item, ...center, radius }
+        }).sort((a, b) => a.depth - b.depth)
+        const shellRadius = 0.66 * MAP_RADIUS
+        const cerebrum = project(0, 0, 0)
+        const cerebellum = project(0, -0.6 * MAP_RADIUS, -0.46 * MAP_RADIUS)
+        const brainstemTop = project(0, -0.48 * MAP_RADIUS, -0.28 * MAP_RADIUS)
+        const brainstemBottom = project(0, -0.98 * MAP_RADIUS, -0.38 * MAP_RADIUS)
+        const midTop = project(0, 0.62 * MAP_RADIUS, 0)
+        const midBottom = project(0, -0.42 * MAP_RADIUS, 0)
+        const activeKeys = new Set(shares.map((item) => item.key))
+        const fusionNodes = mapClusterFusions(events).filter((fusion) => {
+          return fusion.key.split('+').every((key) => key !== 'calm' && activeKeys.has(key))
+        }).slice(0, 5).map((fusion) => {
+          const [a, b] = fusion.key.split('+')
+          const pa = brainProject(a, camera)
+          const pb = brainProject(b, camera)
+          return {
+            ...fusion,
+            a,
+            b,
+            pa,
+            pb,
+            sx: (pa.sx + pb.sx) / 2,
+            sy: (pa.sy + pb.sy) / 2,
+            radius: 9 + Math.sqrt(fusion.count) * 6,
+          }
+        })
+        const detail = () => {
+          if (selectedEmotion) {
+            const info = shares.find((item) => item.key === selectedEmotion)
+            if (!info) return null
+            const rows = events
+              .map((event) => ({ event, score: Number(mapScores(event)[selectedEmotion] || 0) }))
+              .filter((row) => row.score > 0.08)
+              .sort((a, b) => b.score - a.score)
+              .slice(0, 8)
+            return h('div', { style: { ...S.card, background: C.input, marginTop: '6px', marginBottom: 0 } },
+              h('div', { style: { ...S.row, justifyContent: 'space-between' } },
+                h('span', { style: { ...S.chip, color: info.color, borderColor: `${info.color}88` } },
+                  `${info.label} · ${info.area} · ${percent(info.share)}`),
+                h('button', {
+                  type: 'button',
+                  style: { ...S.btn, padding: '2px 9px' },
+                  onClick: () => setSelectedEmotion(''),
+                }, '关闭'),
+              ),
+              h('div', { style: { ...S.hint, margin: '6px 0' } },
+                `这种情绪占全部情绪权重的 ${percent(info.share)}；下面 ${rows.length} 条是和它关系最强的经历。`),
+              rows.length === 0
+                ? h('div', { style: S.hint }, '还没有这类情绪的记忆。')
+                : rows.map((row, index) => h('div', {
+                  key: row.event.id || `${row.event.createdAt}-${index}`,
+                  style: { padding: '6px 0', borderBottom: `1px solid ${C.border}55` },
+                },
+                  h('div', { style: { ...S.row, justifyContent: 'space-between' } },
+                    h('span', { style: { ...S.hint, color: info.color } }, `相关度 ${Math.round(row.score * 100)}%`),
+                    h('span', { style: S.hint }, fmtTime(row.event.createdAt)),
+                  ),
+                  h('div', { style: { fontSize: '12px', marginTop: '2px' } }, row.event.text),
+                  row.event.quote ? h('div', { style: { ...S.hint, marginTop: '2px' } }, `主人当时说：「${row.event.quote}」`) : null,
+                )),
+            )
+          }
+          if (fusionKey) {
+            const cluster = fusionNodes.find((item) => item.key === fusionKey)
+            if (!cluster) return null
+            return h('div', { style: { ...S.card, background: C.input, marginTop: '6px', marginBottom: 0 } },
+              h('div', { style: { ...S.row, justifyContent: 'space-between' } },
+                h('span', { style: { ...S.chip, color: cluster.color, borderColor: `${cluster.color}88` } },
+                  `${cluster.name} · ${EMO_LABEL[cluster.a]}+${EMO_LABEL[cluster.b]} · ${cluster.count} 条`),
+                h('button', {
+                  type: 'button',
+                  style: { ...S.btn, padding: '2px 9px' },
+                  onClick: () => setFusionKey(''),
+                }, '关闭'),
+              ),
+              h('div', { style: { ...S.hint, margin: '6px 0' } }, '两类情绪同时出现的经历，重叠处就是融合。'),
+              cluster.events.slice(0, 8).map((event, index) => h('div', {
+                key: event.id || `${event.createdAt}-${index}`,
+                style: { padding: '6px 0', borderBottom: `1px solid ${C.border}55` },
+              },
+                h('div', { style: { ...S.row, justifyContent: 'space-between' } },
+                  h('span', { style: S.hint }, emotionText(event)),
+                  h('span', { style: S.hint }, fmtTime(event.createdAt)),
+                ),
+                h('div', { style: { fontSize: '12px', marginTop: '2px' } }, event.text),
+                event.quote ? h('div', { style: { ...S.hint, marginTop: '2px' } }, `主人当时说：「${event.quote}」`) : null,
+              )),
+            )
+          }
+          return null
+        }
+        return h('div', null,
+          h('svg', {
+            ref: mapSvgRef,
+            viewBox: '0 0 640 540',
+            style: {
+              width: '100%',
+              height: '430px',
+              display: 'block',
+              cursor: mapDragRef.current ? 'grabbing' : 'grab',
+              touchAction: 'none',
+              userSelect: 'none',
+            },
+            onPointerDown: pointerDown,
+            onPointerMove: pointerMove,
+            onPointerUp: pointerUp,
+            onPointerLeave: pointerUp,
+            onDoubleClick: () => setCamera(MAP_CAMERA),
+            role: 'img',
+            'aria-label': '三维情绪脑区图',
+          },
+            h('defs', null, regionNodes.map((item) => h('radialGradient', {
+              key: item.key,
+              id: `brain-${item.key}`,
+              cx: '50%',
+              cy: '50%',
+              r: '50%',
+            },
+              h('stop', { offset: '0%', stopColor: item.color, stopOpacity: 0.7 }),
+              h('stop', { offset: '55%', stopColor: item.color, stopOpacity: 0.42 }),
+              h('stop', { offset: '100%', stopColor: item.color, stopOpacity: 0 }),
+            ))),
+            h('g', { opacity: 0.95 },
+              h('ellipse', {
+                cx: cerebrum.sx,
+                cy: cerebrum.sy,
+                rx: shellRadius * cerebrum.scale * 1.04,
+                ry: shellRadius * cerebrum.scale * 0.86,
+                fill: '#8fa6c8',
+                opacity: 0.07,
+                stroke: '#8fa6c8',
+                strokeOpacity: 0.32,
+                strokeWidth: 1.3,
+              }),
+              h('line', {
+                x1: cerebrum.sx,
+                y1: cerebrum.sy - shellRadius * cerebrum.scale * 0.8,
+                x2: cerebrum.sx,
+                y2: cerebrum.sy + shellRadius * cerebrum.scale * 0.8,
+                stroke: '#8fa6c8',
+                strokeOpacity: 0.2,
+                strokeWidth: 1,
+                strokeDasharray: '3 6',
+              }),
+              [-0.5, -0.18, 0.18, 0.5].flatMap((offset) => [-1, 1].map((side) => {
+                const rx = shellRadius * cerebrum.scale * 1.04
+                const ry = shellRadius * cerebrum.scale * 0.86
+                const half = rx * Math.sqrt(Math.max(0, 1 - offset * offset)) * 0.8
+                return h('path', {
+                  key: `gyri-${side}-${offset}`,
+                  d: `M ${cerebrum.sx + side * rx * 0.05} ${cerebrum.sy + ry * offset} q ${side * half * 0.42} ${-ry * 0.07} ${side * half * 0.8} 0`,
+                  fill: 'none',
+                  stroke: '#8fa6c8',
+                  strokeOpacity: 0.13,
+                  strokeWidth: 1,
+                })
+              })),
+              h('ellipse', {
+                cx: cerebellum.sx,
+                cy: cerebellum.sy,
+                rx: 0.26 * shellRadius * cerebellum.scale,
+                ry: 0.1 * shellRadius * cerebellum.scale,
+                fill: '#8fa6c8',
+                opacity: 0.07,
+                stroke: '#8fa6c8',
+                strokeOpacity: 0.24,
+                strokeWidth: 1,
+              }),
+              h('line', {
+                x1: brainstemTop.sx,
+                y1: brainstemTop.sy,
+                x2: brainstemBottom.sx,
+                y2: brainstemBottom.sy,
+                stroke: '#8fa6c8',
+                strokeOpacity: 0.22,
+                strokeWidth: 8,
+                strokeLinecap: 'round',
+              }),
+            ),
+            fusionNodes.map((fusion) => h('line', {
+              key: `bridge-${fusion.key}`,
+              x1: fusion.pa.sx,
+              y1: fusion.pa.sy,
+              x2: fusion.pb.sx,
+              y2: fusion.pb.sy,
+              stroke: fusion.color,
+              strokeWidth: 2,
+              strokeDasharray: '2 6',
+              opacity: 0.4,
+            })),
+            regionNodes.map((item) => h('g', {
+              key: item.key,
+              style: { cursor: 'pointer' },
+              onClick: pick(() => pickEmotion(item.key)),
+              role: 'button',
+              'aria-label': `${item.label} ${percent(item.share)}`,
+            },
+              h('circle', { cx: item.sx, cy: item.sy, r: item.radius, fill: `url(#brain-${item.key})` }),
+              h('circle', { cx: item.sx, cy: item.sy, r: item.radius * 0.48, fill: item.color, opacity: 0.1 }),
+              item.key === selectedEmotion
+                ? h('circle', { cx: item.sx, cy: item.sy, r: item.radius, fill: 'none', stroke: C.text, strokeWidth: 1.6 })
+                : null,
+              item.key === selectedEmotion
+                ? h('text', {
+                  x: item.sx,
+                  y: item.sy - 1,
+                  textAnchor: 'middle',
+                  fill: C.text,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  style: { paintOrder: 'stroke', stroke: 'rgba(8,14,24,.72)', strokeWidth: 3 },
+                }, `${item.label} ${percent(item.share)}`)
+                : null,
+            )),
+            fusionNodes.map((fusion) => h('g', {
+              key: `fusion-${fusion.key}`,
+              style: { cursor: 'pointer' },
+              onClick: pick(() => {
+                setSelected(null)
+                setSelectedEmotion('')
+                setFusionKey((prev) => (prev === fusion.key ? '' : fusion.key))
+              }),
+            },
+              h('ellipse', {
+                cx: fusion.sx,
+                cy: fusion.sy,
+                rx: fusion.radius,
+                ry: fusion.radius * 0.64,
+                fill: fusion.color,
+                opacity: 0.22,
+              }),
+              h('circle', { cx: fusion.sx, cy: fusion.sy, r: 3, fill: fusion.color }),
+              h('text', {
+                x: fusion.sx,
+                y: fusion.sy - fusion.radius * 0.7 - 3,
+                textAnchor: 'middle',
+                fill: fusion.color,
+                fontSize: 9,
+                fontWeight: 600,
+              }, `${fusion.name} ×${fusion.count}`),
+            )),
+          ),
+          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 8px', marginTop: '6px' } },
+            shares.map((item) => h('button', {
+              key: item.key,
+              type: 'button',
+              onClick: () => pickEmotion(item.key),
+              title: `${item.label} · ${item.area}`,
+              style: {
+                ...S.chip,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                color: C.text,
+                background: item.key === selectedEmotion ? `${item.color}22` : 'transparent',
+                borderColor: item.key === selectedEmotion ? `${item.color}aa` : C.border,
+              },
+            },
+              h('span', { style: { width: '8px', height: '8px', borderRadius: '50%', background: item.color } }),
+              `${item.label} ${percent(item.share)}`,
+            )),
+          ),
+          h('div', { style: { ...S.hint, marginTop: '4px' } },
+            `色块大小是这类情绪在全部情绪权重里的占比（共 ${events.length} 条经历；平静是底色，不计入占比）；重叠的色块和虚线表示两类情绪同时出现、互相融合。拖动旋转、滚轮缩放、双击复位；点色块或下方标签查看这类情绪的对话。`),
+          h('div', { style: { ...S.hint, marginTop: '2px' } },
+            '脑区位置：伏隔核=开心 · 岛叶=亲近 · 前扣带=难过 · 杏仁核=生气 · 杏仁核前部=担心 · 脑干=疲惫 · 蓝斑=惊讶 · 内侧前额叶=平静。'),
+          detail(),
+        )
+      }
       return h('div', null,
         h('div', { style: S.card },
           h('div', { style: { ...S.row, justifyContent: 'space-between', marginBottom: '8px' } },
@@ -1392,49 +2049,29 @@ window.__ModuleLoader__.load({
             ? h('div', { style: S.hint }, '还没有自我记忆。和它聊几句、夸夸它或惹它生气，这里才会慢慢有东西。')
             : view === 'map'
               ? h('div', null,
-                h('svg', { viewBox: '-320 -270 640 540', style: { width: '100%', height: '430px', display: 'block' } },
-                  h('circle', { cx: 0, cy: 0, r: 44, fill: C.input, stroke: C.border }),
-                  h('text', { x: 0, y: -2, textAnchor: 'middle', fill: C.text, fontSize: 15, fontWeight: 700 }, '我'),
-                  h('text', { x: 0, y: 16, textAnchor: 'middle', fill: C.faint, fontSize: 10 }, `${events.length} 条`),
-                  mapNodes.filter((node) => node.type === 'branch').map((node) => h('g', { key: `b-${node.key}` },
-                    h('line', { x1: 0, y1: 0, x2: node.x, y2: node.y, stroke: node.color, strokeWidth: 1.4, opacity: 0.55 }),
-                    h('circle', { cx: node.x, cy: node.y, r: 24, fill: `${node.color}33`, stroke: node.color, strokeWidth: 1.5 }),
-                    h('text', { x: node.x, y: node.y + 4, textAnchor: 'middle', fill: C.text, fontSize: 12, fontWeight: 700 }, node.label),
-                    h('text', { x: node.x, y: node.y + 34, textAnchor: 'middle', fill: C.faint, fontSize: 10 }, `${node.count} 条`),
-                  )),
-                  mapNodes.filter((node) => node.type === 'leaf').map((node) => h('g', {
-                    key: `l-${node.key}`,
-                    style: { cursor: 'pointer' },
-                    onClick: () => setSelected(node.event),
-                  },
-                    h('line', { x1: 0, y1: 0, x2: node.x, y2: node.y, stroke: node.color, strokeWidth: 0.6, opacity: 0.16 }),
-                    h('circle', { cx: node.x, cy: node.y, r: 5, fill: node.color }),
-                    h('text', {
-                      x: node.x + (node.x >= 0 ? 9 : -9),
-                      y: node.y + 4,
-                      textAnchor: node.x >= 0 ? 'start' : 'end',
-                      fill: C.text,
-                      fontSize: 10,
-                    }, String(node.event.text || '').slice(0, 9)),
-                  )),
+                h('div', { style: { ...S.row, justifyContent: 'space-between', marginBottom: '6px' } },
+                  h('div', { style: { ...S.row, gap: '6px' } },
+                    [['3d', '3D 脑区'], ['2d', '平面 2D']].map(([mode, label]) => h('button', {
+                      key: mode,
+                      type: 'button',
+                      onClick: () => switchMapMode(mode),
+                      style: { ...S.btn, opacity: mapMode === mode ? 1 : 0.55, padding: '4px 10px' },
+                    }, label)),
+                  ),
+                  mapMode === '3d'
+                    ? h('button', {
+                      type: 'button',
+                      style: { ...S.btn, padding: '4px 10px' },
+                      onClick: () => setCamera(MAP_CAMERA),
+                    }, '复位视角')
+                    : null,
                 ),
-                selected
-                  ? h('div', { style: { ...S.card, background: C.input, marginTop: '4px', marginBottom: 0 } },
-                    h('div', { style: { ...S.row, justifyContent: 'space-between' } },
-                      h('span', { style: { ...S.chip, color: selected.valence >= 0 ? C.ok : C.danger } },
-                        `${kindLabel[selected.kind] || '经历'} · ${emotionText(selected)}`),
-                      selected.source && selected.source !== 'chat'
-                        ? h('span', { style: S.chip },
-                          selected.source === 'autonomy' ? '自主决定'
-                            : selected.source === 'whisper' ? '自言自语'
-                              : '自主执行')
-                        : null,
-                      h('span', { style: S.hint }, fmtTime(selected.createdAt)),
-                    ),
-                    h('div', { style: { fontSize: '12px', marginTop: '4px' } }, selected.text),
-                    selected.quote ? h('div', { style: { ...S.hint, marginTop: '2px' } }, `主人当时说：「${selected.quote}」`) : null,
-                  )
-                  : h('div', { style: { ...S.hint, marginTop: '2px' } }, '点圆点看这条记忆；心情分支按当前情绪聚合，最多显示 5 条最近的。'),
+                mapMode === '3d' ? render3D() : render2D(),
+                mapMode === '3d' ? null : mapSelectedCard,
+                mapMode !== '3d' && !mapSelectedCard
+                  ? h('div', { style: { ...S.hint, marginTop: '2px' } },
+                    '点圆点看这条记忆；心情分支按当前情绪聚合，最多显示 5 条最近的。')
+                  : null,
               )
               : h('div', null, events.map((event, index) => h('div', {
                 key: event.id || `${event.createdAt}-${index}`,
