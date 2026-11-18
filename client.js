@@ -429,7 +429,7 @@ window.__ModuleLoader__.load({
         const n1z = face.nx * sinY + face.nz * cosY
         const n1y = face.ny * cosX - n1z * sinX
         const n2z = face.ny * sinX + n1z * cosX
-        if (n2z < 0) continue
+        const culled = n2z < 0
         const diff = Math.max(0, (n1x * L[0] + n1y * L[1] + n2z * L[2]) / ll)
         const rim = (1 - Math.abs(n2z)) ** 2
         const groove = face.fixed ? 1 : 0.82 + 0.18 * (0.5 + 0.5 * Math.sin(11 * face.u * Math.PI * 2 + 2.2 * Math.sin(4 * face.v * Math.PI) + 0.8))
@@ -447,10 +447,24 @@ window.__ModuleLoader__.load({
           depth: (pa[2] + pb[2] + pc[2] + pd[2]) / 4,
           points: [[pa[0], pa[1]], [pb[0], pb[1]], [pc[0], pc[1]], [pd[0], pd[1]]],
           selected: isSelected,
+          culled,
         })
       }
-      drawn.sort((a, b) => a.depth - b.depth)
+      // 先用全部面（含背面）铺一层底色，避免深沟里被剔除的面露出画布黑底。
       for (const item of drawn) {
+        ctx.beginPath()
+        ctx.moveTo(item.points[0][0], item.points[0][1])
+        for (let i = 1; i < 4; i += 1) ctx.lineTo(item.points[i][0], item.points[i][1])
+        ctx.closePath()
+        ctx.fillStyle = '#1b2330'
+        ctx.fill()
+        ctx.strokeStyle = '#1b2330'
+        ctx.lineWidth = 1
+        ctx.stroke()
+      }
+      const visible = drawn.filter((item) => !item.culled)
+      visible.sort((a, b) => a.depth - b.depth)
+      for (const item of visible) {
         ctx.beginPath()
         ctx.moveTo(item.points[0][0], item.points[0][1])
         for (let i = 1; i < 4; i += 1) ctx.lineTo(item.points[i][0], item.points[i][1])
@@ -458,7 +472,7 @@ window.__ModuleLoader__.load({
         ctx.fillStyle = item.fill
         ctx.fill()
         ctx.strokeStyle = item.selected ? 'rgba(255,255,255,.55)' : item.fill
-        ctx.lineWidth = item.selected ? 0.9 : 0.5
+        ctx.lineWidth = item.selected ? 1 : 0.9
         ctx.stroke()
       }
       const fusionHits = []
@@ -500,7 +514,7 @@ window.__ModuleLoader__.load({
           ctx.fillText(label, site.sx, site.sy - 4)
         }
       }
-      return { faces: drawn, fusions: fusionHits }
+      return { faces: visible, fusions: fusionHits }
     }
 
     const pointInPoly = (x, y, points) => {
