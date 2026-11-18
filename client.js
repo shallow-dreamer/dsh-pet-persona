@@ -270,22 +270,24 @@ window.__ModuleLoader__.load({
     const brainShares = (events) => {
       const sums = {}
       let total = 0
+      let calmSum = 0
       for (const event of events) {
-        for (const [key, score] of Object.entries(mapScores(event))) {
-          // 平静是底色，不参与情绪占比；否则默认值会把整张图压成灰色。
+        const scores = mapScores(event)
+        calmSum += Number(scores.calm || 0)
+        for (const [key, score] of Object.entries(scores)) {
+          // 平静是底色，不参与彩色占比；单独作为「平静度」展示。
           if (key === 'calm' || !(key in BRAIN_REGIONS) || score <= 0.08) continue
           sums[key] = (sums[key] || 0) + score
           total += score
         }
       }
       if (total <= 0) {
-        let calm = 0
-        for (const event of events) calm += Number(mapScores(event).calm || 0)
         return {
-          shares: calm > 0
+          shares: calmSum > 0
             ? [{ key: 'calm', label: EMO_LABEL.calm, color: EMO_COLOR.calm, area: BRAIN_REGIONS.calm.area, share: 1 }]
             : [],
           total: 0,
+          calmRatio: calmSum > 0 ? 1 : 0,
         }
       }
       const shares = EMO_ORDER
@@ -298,7 +300,7 @@ window.__ModuleLoader__.load({
           share: total > 0 ? sums[key] / total : 0,
         }))
         .sort((a, b) => b.share - a.share)
-      return { shares, total }
+      return { shares, total, calmRatio: calmSum / (calmSum + total) }
     }
 
     const brainProject = (key, camera) => {
@@ -393,7 +395,7 @@ window.__ModuleLoader__.load({
       return [parseInt(value.slice(0, 2), 16), parseInt(value.slice(2, 4), 16), parseInt(value.slice(4, 6), 16)]
     }
 
-    const drawBrain3D = (canvas, { shares, camera, selected }) => {
+    const drawBrain3D = (canvas, { shares, camera, selected, calmRatio = 0 }) => {
       const ctx = canvas.getContext('2d')
       if (!ctx) return { faces: [] }
       const W = canvas.width
@@ -463,6 +465,13 @@ window.__ModuleLoader__.load({
         ctx.strokeStyle = item.selected ? 'rgba(255,255,255,.55)' : item.fill
         ctx.lineWidth = item.selected ? 1 : 0.9
         ctx.stroke()
+      }
+      if (calmRatio > 0) {
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-atop'
+        ctx.fillStyle = `rgba(150,164,184,${Math.min(0.42, 0.12 + 0.34 * calmRatio).toFixed(3)})`
+        ctx.fillRect(0, 0, W, H)
+        ctx.restore()
       }
       for (const item of shares) {
         if (item.share >= 0.05) continue
@@ -1826,8 +1835,8 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         const canvas = brainCanvasRef.current
         if (!canvas || view !== 'map' || mapMode !== '3d') return
-        const { shares } = brainShares(events)
-        brainHitsRef.current = drawBrain3D(canvas, { shares, camera, selected: selectedEmotion })
+        const { shares, calmRatio } = brainShares(events)
+        brainHitsRef.current = drawBrain3D(canvas, { shares, camera, selected: selectedEmotion, calmRatio })
       }, [view, mapMode, camera, selectedEmotion, events])
       const saveInject = async () => {
         setSavingInject(true)
@@ -1896,7 +1905,7 @@ window.__ModuleLoader__.load({
         ),
       )
       const render3D = () => {
-        const { shares } = brainShares(events)
+        const { shares, calmRatio } = brainShares(events)
         const project = (x, y, z) => mapProject(x, y, z, camera)
         const pointerDown = (event) => {
           mapDragRef.current = { x: event.clientX, y: event.clientY, rotX: camera.rotX, rotY: camera.rotY }
@@ -2024,8 +2033,11 @@ window.__ModuleLoader__.load({
               `${item.label} ${percent(item.share)}`,
             )),
           ),
+          h('div', { style: { ...S.hint, marginTop: '2px' } },
+            h('span', { style: { display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: EMO_COLOR.calm, marginRight: '4px' } }),
+            `平静度 ${percent(calmRatio)}：平静是底色，不计入彩色占比，只把整体压暗一点。`),
           h('div', { style: { ...S.hint, marginTop: '4px' } },
-            `每种情绪像一层有颜色的水，一起填满整个脑壳：面积约等于它在全部情绪权重里的占比（共 ${events.length} 条经历；平静是底色，不计入占比）；多种情绪的经历会分别计入各情绪占比，主图不再画融合；拖动旋转、滚轮缩放、双击复位，点色块或下方标签查看这类情绪的对话。`),
+            `每种情绪像一层有颜色的水，一起填满整个脑壳：面积约等于它在全部情绪权重里的占比（共 ${events.length} 条经历）；多种情绪的经历会分别计入各情绪占比，主图不再画融合；拖动旋转、滚轮缩放、双击复位，点色块或下方标签查看这类情绪的对话。`),
           h('div', { style: { ...S.hint, marginTop: '2px' } },
             '脑区位置：伏隔核=开心 · 岛叶=亲近 · 前扣带=难过 · 杏仁核=生气 · 杏仁核前部=担心 · 脑干=疲惫 · 蓝斑=惊讶 · 内侧前额叶=平静。'),
           detail(),
