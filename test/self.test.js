@@ -159,7 +159,7 @@ test('reset 只清指定宠物', async () => {
   }
 })
 
-test('睡着时的梦话情绪权重按 0.35 计', async () => {
+test('睡着时的梦话权重按 0.05 计且总权重不超过 20%', async () => {
   const dir = tempDir()
   try {
     const now = Date.now()
@@ -168,8 +168,8 @@ test('睡着时的梦话情绪权重按 0.35 计', async () => {
     store.note({ petId: 'main', text: '梦到被追', source: 'whisper', valence: -1, energy: 0.2, importance: 5, sleeping: true })
     store.note({ petId: 'main', text: '今天真开心', source: 'whisper', valence: 1, energy: 0.8, importance: 5 })
     const state = store.state('main')
-    // 醒着 +1 对 睡着的 -0.35：valence = (1 - 0.35) / 1.35 ≈ 0.481
-    assert.ok(Math.abs(state.valence - 0.481) < 0.02)
+    // 醒着权重 5、梦话 0.05*5=0.25：valence = (5 - 0.25) / 5.25 ≈ 0.905
+    assert.ok(Math.abs(state.valence - 0.905) < 0.02, `valence=${state.valence}`)
     await flush(store)
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -205,7 +205,26 @@ test('旧梦话记录按文案前缀继续降权', async () => {
     const store = new SelfStore({ dir, now: () => now })
     store.initSync()
     const state = store.state('main')
-    assert.ok(Math.abs(state.valence - 0.481) < 0.02, `valence=${state.valence}`)
+    assert.ok(Math.abs(state.valence - 0.905) < 0.02, `valence=${state.valence}`)
+    await flush(store)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('梦话再多，总权重也被压在 20% 以内', async () => {
+  const dir = tempDir()
+  try {
+    const now = Date.now()
+    const store = new SelfStore({ dir, now: () => now })
+    store.initSync()
+    for (let i = 0; i < 10; i += 1) {
+      store.note({ petId: 'main', text: `睡着时说了句梦话：梦 ${i}`, source: 'whisper', valence: -1, energy: 0.2, importance: 5, sleeping: true })
+    }
+    store.note({ petId: 'main', text: '醒着聊了两句', source: 'chat', valence: 1, energy: 0.8, importance: 2 })
+    const state = store.state('main')
+    // 梦话基础权重 50，醒着 2；上限 0.25*2=0.5，valence=(2-0.5)/2.5=0.6
+    assert.ok(Math.abs(state.valence - 0.6) < 0.02, `valence=${state.valence}`)
     await flush(store)
   } finally {
     rmSync(dir, { recursive: true, force: true })

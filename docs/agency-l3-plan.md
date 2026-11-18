@@ -100,7 +100,7 @@ L3 对应四件事：主动观察、连续记忆、有限判断、可追溯承�
 **范围**：
 
 - 记录所有非聊天回复的新气泡：周期碎碎念、梦话、待办提醒、手动触发的碎碎念都算；
-- 同一轮 `/state` 顺带读 `pets.<id>.sleep.data.sleeping`：睡着时的气泡记成「梦话」，并给事件打 `sleeping: true`；心情/情绪聚合时这类事件权重 ×0.35（醒着为 1），见 `lib/self.js` 的 `SLEEP_WHISPER_FACTOR`。
+- 同一轮 `/state` 顺带读 `pets.<id>.sleep.data.sleeping`：睡着时的气泡记成「梦话」，并给事件打 `sleeping: true`；心情/情绪聚合时这类事件权重 ×0.05（醒着为 1），且梦话总权重不超过全部权重的 20%，见 `lib/self.js` 的 `SLEEP_WHISPER_FACTOR`。
 - 不记录主人发起的聊天回复，避免同一句话记两遍；
 - 不记录本插件自己通过 `/broadcast` 播报的提醒/自主发言（它们已有 `self.note` 入口）；
 - 只读 dsh-pet `GET /state`，不写它的任何状态，不改源码。

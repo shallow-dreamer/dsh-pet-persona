@@ -203,7 +203,7 @@
   `status()` 带 `sleeping/checkedAt`；`lib/ui.js` 的 `/self`、`/self/state` 返回 `presence`；
   客户端「它自己」心情卡显示「醒着/睡着」，并在 `/self` 没有 `presence` 时直接读 dsh-pet `/state` 兜底。
 - 梦话：睡着时记下的气泡文本为「睡着时说了句梦话：…」，事件带 `sleeping: true`；醒着仍是「自己嘟囔了一句：…」。
-- 权重：`lib/self.js` 的 `SLEEP_WHISPER_FACTOR = 0.35`，心情/情绪聚合时 `source=whisper && sleeping`
-  的事件权重乘 0.35（醒着为 1）。只影响这类事件，不改聊天与主人事实。
+- 权重：`lib/self.js` 的 `SLEEP_WHISPER_FACTOR = 0.05`，心情/情绪聚合时 `source=whisper && sleeping`
+  的事件权重乘 0.05（醒着为 1）；同时梦话总权重上限为全部权重的 20%。只影响这类事件，不改聊天与主人事实。
 - 旧数据：重启前的 whisper 记录没有 `sleeping`，不回填、不重新标记。
-- 验证：`test/whisper.test.js` 新增梦话标记 1 项；`test/self.test.js` 新增 0.35 权重 1 项；全量测试全过。
+- 验证：`test/whisper.test.js` 新增梦话标记 1 项；`test/self.test.js` 新增 0.05 权重与 20% 上限共 3 项；全量测试全过。
