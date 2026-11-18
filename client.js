@@ -1719,6 +1719,28 @@ window.__ModuleLoader__.load({
     function SelfTab({ data, petName, config, onSaved }) {
       const state = data?.state || { moodText: '平静 · 一般', valence: 0, energy: 0.5, events: 0 }
       const presence = data?.presence || null
+      const [localPresence, setLocalPresence] = useState(null)
+      useEffect(() => {
+        if (presence) return undefined
+        let alive = true
+        const load = async () => {
+          try {
+            const res = await fetch('/dsh-pet-7340/state', { headers: { accept: 'application/json' } })
+            if (!res.ok) return
+            const body = await res.json()
+            const sleeping = body?.pets?.main?.sleep?.data?.sleeping
+            if (alive && typeof sleeping === 'boolean') setLocalPresence({ sleeping })
+          } catch {
+            /* dsh-pet 不在时静默 */
+          }
+        }
+        void load()
+        const timer = setInterval(load, 15000)
+        return () => {
+          alive = false
+          clearInterval(timer)
+        }
+      }, [presence])
       const events = Array.isArray(data?.events) ? data.events : []
       const kindLabel = { event: '经历', feeling: '心情', thought: '想法' }
       const labelFor = (row) => (row?.source === 'whisper' && row?.sleeping === true ? '梦话' : kindLabel[row?.kind] || '经历')
@@ -2112,7 +2134,7 @@ window.__ModuleLoader__.load({
             h('div', { style: { fontSize: '13px', fontWeight: 700 } }, `${petName}最近的心情`),
             h('div', { style: S.row },
               h('span', { style: S.chip }, state.moodText || '平静 · 一般'),
-              presence ? h('span', { style: presence.sleeping ? S.chip : S.chipHot }, presence.sleeping ? '睡着' : '醒着') : null,
+              (presence || localPresence) ? h('span', { style: (presence || localPresence).sleeping ? S.chip : S.chipHot }, (presence || localPresence).sleeping ? '睡着' : '醒着') : null,
             ),
           ),
           h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' } },
