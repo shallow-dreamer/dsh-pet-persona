@@ -267,7 +267,42 @@ window.__ModuleLoader__.load({
       calm: { x: 0, y: 0.28, z: 0.04, area: '内侧前额叶' },
     }
 
-    const brainShares = (events) => {
+    const calmRatioOf = (events) => {
+      const nowMs = Date.now()
+      let calm = 0
+      let color = 0
+      for (const event of events) {
+        const at = Date.parse(event.createdAt) || 0
+        if (!at || at > nowMs) continue
+        const ageH = (nowMs - at) / 3_600_000
+        if (ageH > 48) continue
+        const w = 0.5 ** (ageH / 6) * (Number(event.importance) || 1)
+        const scores = mapScores(event)
+        calm += w * Number(scores.calm || 0)
+        for (const [key, value] of Object.entries(scores)) {
+          if (key === 'calm' || !(key in BRAIN_REGIONS) || value <= 0.08) continue
+          color += w * value
+        }
+      }
+      return calm + color > 0 ? calm / (calm + color) : 0
+    }
+
+    const brainShares = (events, state) => {
+      const stateEmotions = Array.isArray(state?.emotions) ? state.emotions : []
+      const usable = stateEmotions.filter((item) => item && item.key in BRAIN_REGIONS && Number(item.score) > 0)
+      if (usable.length > 0) {
+        const scoreSum = usable.reduce((sum, item) => sum + Number(item.score || 0), 0)
+        if (scoreSum > 0) {
+          const shares = usable.map((item) => ({
+            key: item.key,
+            label: EMO_LABEL[item.key] || item.label || item.key,
+            color: EMO_COLOR[item.key] || EMO_COLOR.calm,
+            area: BRAIN_REGIONS[item.key].area,
+            share: Number(item.score) / scoreSum,
+          })).sort((a, b) => b.share - a.share)
+          return { shares, total: scoreSum, calmRatio: Number(state?.calmRatio) || calmRatioOf(events) }
+        }
+      }
       const sums = {}
       let total = 0
       let calmSum = 0
@@ -300,7 +335,7 @@ window.__ModuleLoader__.load({
           share: total > 0 ? sums[key] / total : 0,
         }))
         .sort((a, b) => b.share - a.share)
-      return { shares, total, calmRatio: calmSum / (calmSum + total) }
+      return { shares, total, calmRatio: calmRatioOf(events) }
     }
 
     const brainProject = (key, camera) => {
@@ -1835,9 +1870,9 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         const canvas = brainCanvasRef.current
         if (!canvas || view !== 'map' || mapMode !== '3d') return
-        const { shares, calmRatio } = brainShares(events)
+        const { shares, calmRatio } = brainShares(events, state)
         brainHitsRef.current = drawBrain3D(canvas, { shares, camera, selected: selectedEmotion, calmRatio })
-      }, [view, mapMode, camera, selectedEmotion, events])
+      }, [view, mapMode, camera, selectedEmotion, events, state])
       const saveInject = async () => {
         setSavingInject(true)
         setInjectError('')
@@ -1905,7 +1940,7 @@ window.__ModuleLoader__.load({
         ),
       )
       const render3D = () => {
-        const { shares, calmRatio } = brainShares(events)
+        const { shares, calmRatio } = brainShares(events, state)
         const project = (x, y, z) => mapProject(x, y, z, camera)
         const pointerDown = (event) => {
           mapDragRef.current = { x: event.clientX, y: event.clientY, rotX: camera.rotX, rotY: camera.rotY }
@@ -2037,7 +2072,7 @@ window.__ModuleLoader__.load({
             h('span', { style: { display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: EMO_COLOR.calm, marginRight: '4px' } }),
             `平静度 ${percent(calmRatio)}：平静是底色，不计入彩色占比，只把整体压暗一点。`),
           h('div', { style: { ...S.hint, marginTop: '4px' } },
-            `每种情绪像一层有颜色的水，一起填满整个脑壳：面积约等于它在全部情绪权重里的占比（共 ${events.length} 条经历）；多种情绪的经历会分别计入各情绪占比，主图不再画融合；拖动旋转、滚轮缩放、双击复位，点色块或下方标签查看这类情绪的对话。`),
+            `每种情绪像一层有颜色的水，一起填满整个脑壳：面积大约等于它在当前心情里的占比（近 48 小时、6 小时半衰加权，与上方心情文字同源，共 ${events.length} 条记忆）；多种情绪的经历会分别计入各情绪占比，主图不再画融合；拖动旋转、滚轮缩放、双击复位，点色块或下方标签查看这类情绪的对话。`),
           h('div', { style: { ...S.hint, marginTop: '2px' } },
             '脑区位置：伏隔核=开心 · 岛叶=亲近 · 前扣带=难过 · 杏仁核=生气 · 杏仁核前部=担心 · 脑干=疲惫 · 蓝斑=惊讶 · 内侧前额叶=平静。'),
           detail(),
