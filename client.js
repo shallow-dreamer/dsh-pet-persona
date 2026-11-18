@@ -1210,19 +1210,30 @@ window.__ModuleLoader__.load({
       const [previewing, setPreviewing] = useState(false)
       const [savingInject, setSavingInject] = useState(false)
       const [injectError, setInjectError] = useState('')
-      const moodOf = (valence) => {
-        const value = Number(valence) || 0
-        if (value >= 0.35) return { key: 'happy', label: '开心', color: '#59d18b' }
-        if (value >= 0.1) return { key: 'good', label: '不错', color: '#6aa9ff' }
-        if (value > -0.1) return { key: 'calm', label: '平静', color: '#9aa4b2' }
-        if (value > -0.35) return { key: 'low', label: '有点低落', color: '#e8c15a' }
-        return { key: 'sad', label: '难过', color: '#ff6b7a' }
+      const EMO_ORDER = ['joy', 'affection', 'sadness', 'anger', 'anxiety', 'tiredness', 'surprise', 'calm']
+      const EMO_LABEL = { joy: '开心', affection: '亲近', sadness: '难过', anger: '生气', anxiety: '担心', tiredness: '疲惫', surprise: '惊讶', calm: '平静' }
+      const EMO_COLOR = { joy: '#59d18b', affection: '#f08ab0', sadness: '#6aa9ff', anger: '#ff6b7a', anxiety: '#b98bff', tiredness: '#e8c15a', surprise: '#ff9f6b', calm: '#9aa4b2' }
+      const emotionOfEvent = (event) => {
+        const list = Array.isArray(event?.emotions) ? event.emotions : []
+        if (list.length > 0) {
+          const top = list[0]
+          return { key: top.key, label: EMO_LABEL[top.key] || top.label || '经历', color: EMO_COLOR[top.key] || '#9aa4b2', list }
+        }
+        const value = Number(event?.valence) || 0
+        const key = value >= 0.35 ? 'joy' : value >= 0.1 ? 'calm' : value > -0.1 ? 'calm' : value > -0.35 ? 'sadness' : 'sadness'
+        return { key, label: EMO_LABEL[key], color: EMO_COLOR[key], list: [] }
       }
-      const groupList = ['happy', 'good', 'calm', 'low', 'sad']
-        .map((key) => {
-          const sample = moodOf(key === 'happy' ? 1 : key === 'good' ? 0.2 : key === 'calm' ? 0 : key === 'low' ? -0.2 : -1)
-          return { ...sample, items: events.filter((event) => moodOf(event.valence).key === key) }
-        })
+      const emotionText = (event) => {
+        const list = Array.isArray(event?.emotions) ? event.emotions : []
+        return list.length > 0 ? list.slice(0, 3).map((item) => item.label || EMO_LABEL[item.key]).join(' + ') : emotionOfEvent(event).label
+      }
+      const groupList = EMO_ORDER
+        .map((key) => ({
+          key,
+          label: EMO_LABEL[key],
+          color: EMO_COLOR[key],
+          items: events.filter((event) => emotionOfEvent(event).key === key),
+        }))
         .filter((group) => group.items.length > 0)
       const mapNodes = []
       if (view === 'map' && groupList.length > 0) {
@@ -1350,6 +1361,17 @@ window.__ModuleLoader__.load({
             h('div', { style: { fontSize: '13px', fontWeight: 700 } }, `${petName}现在的心情`),
             h('span', { style: S.chip }, state.moodText || '平静 · 一般'),
           ),
+          h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' } },
+            (Array.isArray(state.emotions) ? state.emotions : []).slice(0, 4).map((emotion) => h('span', {
+              key: emotion.key,
+              title: `${emotion.label} ${Math.round((emotion.score || 0) * 100)}%`,
+              style: {
+                ...S.chip,
+                borderColor: `${EMO_COLOR[emotion.key] || '#9aa4b2'}88`,
+                color: EMO_COLOR[emotion.key] || C.text,
+              },
+            }, `${emotion.label} ${Math.round((emotion.score || 0) * 100)}%`)),
+          ),
           h('div', { style: { ...S.hint, marginBottom: '4px' } }, `心情 ${Math.round(((state.valence + 1) / 2) * 100)}%`),
           h('div', { style: { height: '8px', borderRadius: '6px', background: C.input, overflow: 'hidden', marginBottom: '10px' } },
             h('div', { style: { width: `${Math.round(((state.valence + 1) / 2) * 100)}%`, height: '100%', background: 'linear-gradient(90deg,#6aa9ff,#59d18b)' } }),
@@ -1400,7 +1422,7 @@ window.__ModuleLoader__.load({
                   ? h('div', { style: { ...S.card, background: C.input, marginTop: '4px', marginBottom: 0 } },
                     h('div', { style: { ...S.row, justifyContent: 'space-between' } },
                       h('span', { style: { ...S.chip, color: selected.valence >= 0 ? C.ok : C.danger } },
-                        `${kindLabel[selected.kind] || '经历'} · ${moodOf(selected.valence).label}`),
+                        `${kindLabel[selected.kind] || '经历'} · ${emotionText(selected)}`),
                       selected.source && selected.source !== 'chat'
                         ? h('span', { style: S.chip },
                           selected.source === 'autonomy' ? '自主决定'
@@ -1420,7 +1442,7 @@ window.__ModuleLoader__.load({
               },
               h('div', { style: { ...S.row, justifyContent: 'space-between' } },
                 h('span', { style: { ...S.chip, color: event.valence >= 0 ? C.ok : C.danger } },
-                  `${kindLabel[event.kind] || '经历'} · ${event.valence >= 0 ? '好' : '低落'}`),
+                  `${kindLabel[event.kind] || '经历'} · ${emotionText(event)}`),
                 h('span', { style: S.hint }, fmtTime(event.createdAt)),
               ),
               h('div', { style: { fontSize: '12px', marginTop: '3px' } }, event.text),

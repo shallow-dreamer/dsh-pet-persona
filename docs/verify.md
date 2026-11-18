@@ -32,7 +32,7 @@ realpath = E:\DeepSeek\dsh-home\profiles\desktop\node_modules\dsh-pet-persona
 安装副本与工作区源码 `diff -r` 一致（文档除外；`docs/verify.md` 与 `README.md` 为安装后补写，
 不影响运行时）。
 
-## 2. 单测（118/118，v0.10.1）
+## 2. 单测（124/124，v0.11.0）
 
 ```
 test/facts.test.js   # pass 10  # fail 0
@@ -266,7 +266,7 @@ row 为 `include:dsh-pet-persona`。
   被忽略 2 次当天降级；关掉 `autonomyLevel=off` 立即停。
 - 决策写 `agency/decisions.jsonl`；`GET/POST /pet-persona/api/agency/autonomy` 查看/切换等级。
 - `test/autonomy.test.js` 12 项（静默、上限、冷却、忽略降级、observe 不发声、日志落盘、
-  记忆关怀、self.note 写回、observe 决策回调）；全量 **118/118**。
+  记忆关怀、self.note 写回、observe 决策回调）；全量 **124/124**。
 - 自我记忆与自主的闭环：`self.note()` 把「帮主人记笔记 / 提醒到点」写成它自己的经历；
   autonomy 的「记忆关怀」触发会读 `facts.active` 里的累/忙信号；决策记录带当时心情。
 - 设置页「自主」tab 顶部显示等级、今日次数、忽略次数、最近决策理由。
@@ -278,7 +278,14 @@ row 为 `include:dsh-pet-persona`。
 - 排除两类：最近 60 秒 `capture.replyText`（聊天回复）与本插件 `speak()` 播报的文本；
   其余气泡延迟 2 秒再写 `self.note({source:'whisper'})`，给 capture 留出先到的窗口。
 - 记录文本「自己嘟囔了一句：…」；脑图详情标签「自言自语」。
-- `test/whisper.test.js` 4 项：基线、聊天排除、主动播报排除、同 counter 去重；全量 **118/118**。
+- `test/whisper.test.js` 4 项：基线、聊天排除、主动播报排除、同 counter 去重；全量 **124/124**。
+
+## 4.8 多情绪模型（v0.11.0）
+
+- `lib/emotion.js`：8 类情绪（开心/亲近/难过/生气/担心/疲惫/惊讶/平静），同一句话可命中多类，输出 `emotions` 数组与 `mixText`（如“开心里带点生气”）。
+- `SelfStore` 每条记录保存 `emotions`；`state()` 按情绪单独加权，跳过“平静”基线，返回前 4 类与混合文案。
+- 设置页「它自己」：心情卡显示混合文案 + 前 4 类情绪徽章；脑图分支按 8 类情绪聚合；时间线和详情显示一条经历的多情绪标签。
+- `test/emotion.test.js` 6 项，全量 **124/124**；已有 47 条自我记忆已回填情绪标签。
 
 ## 5. 真机验证：当前状态与操作步骤
 

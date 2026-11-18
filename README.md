@@ -82,7 +82,7 @@ cp -a E:/DSH/plugins/dsh-pet-persona/. "$P/node_modules/dsh-pet-persona/"
 - **人格 × 记忆**：只读显示 dsh-pet 的人格原文（来源 `pet`/`user`/`default`）、
   用一句话模拟 recall 并预览最终 system、查看人格防注入记录（`persona_skip`）。
 - **语音**：声纹登记（3 段）、按住说话、常听模式、唤醒词与阈值；详见下一节。
-- **它自己**：心情双条（愉快度/精神）+ 最近经历脑图/时间线；可在这里开关 P2 注入并预览实际会追加的【现在的我】。这是宠物自己的记忆，不写主人事实。
+- **它自己**：多情绪心情（8 类情绪可混合，如“开心里带点累”）+ 最近经历脑图/时间线；可在这里开关 P2 注入并预览实际会追加的【现在的我】。这是宠物自己的记忆，不写主人事实。
 - **自主**：L1 观察 / L2 可逆动作的待确认列表；它只会提议「记一条 / 提醒我 / 整理心情」，
   允许后才写文件，拒绝不落盘，执行后可撤销；不能删文件、改设置、执行 shell 或对外发送。
 - **设置**：`budgetChars` / `autoLearn` / `learnEveryTurns` / `idleLearnMs` / `maxFacts` /
@@ -151,7 +151,7 @@ cp -a E:/DSH/plugins/dsh-pet-persona/. "$P/node_modules/dsh-pet-persona/"
 - 6 小时心情半衰期，48 小时外不计入；`selfMaxEntries` 超出后压缩最旧；
 - P2 注入默认 **关闭**；打开后只在主人事实块**之后**追加一段独立的
   `【现在的我】`（当前心情 + 最多 3 条最近经历），不复述、不带原话、不改人格；
-- 设置页「它自己」支持**脑图 / 时间线**切换：脑图按当前心情分支（开心/不错/平静/有点低落/难过）聚合最近经历，点圆点看详情；时间线按时间倒序。
+- 设置页「它自己」支持**脑图 / 时间线**切换：脑图按 8 类情绪（开心/亲近/难过/生气/担心/疲惫/惊讶/平静）聚合最近经历，一条经历可同时带多种情绪；点圆点看详情。
 - 注入区可调预算/条数/窗口/是否带原话，并实时预览真正拼进 system 的那一段；
 - `POST /pet-persona/api/self/preview` 只读预览；`POST /pet-persona/api/self/reset` 可清空。
 
@@ -160,7 +160,7 @@ cp -a E:/DSH/plugins/dsh-pet-persona/. "$P/node_modules/dsh-pet-persona/"
 ## 开发与验收
 
 ```bash
-# 单测（118 个：facts 10 / recall 7 / learn 10 / index 8 / ui 14 / voice 6 / self 8 / self-context 11 / models 7 / agency 12 / autonomy 12 / whisper 4 / tts-emotion 9）
+# 单测（124 个：facts 10 / recall 7 / learn 10 / index 8 / ui 14 / voice 6 / self 8 / emotion 6 / self-context 11 / models 7 / agency 12 / autonomy 12 / whisper 4 / tts-emotion 9）
 for f in test/*.test.js; do node "$f" || exit 1; done
 # 或 node --test test/（需要能 spawn 子进程的环境）
 

@@ -1,7 +1,7 @@
 # 桌宠「自我记忆」计划书
 
-版本：v0.2（2026-11-15）
-状态：P1 已实现并安装；P2a 注入已实现（v0.5.0，74/74 单测，默认关）；P3 见 `docs/self-roadmap.md`
+版本：v0.3（2026-11-18）
+状态：P1/P2 已实现；多情绪模型 v0.11.0 已实现并安装（124/124 单测）；P3 见 `docs/self-roadmap.md`
 关联：`docs/self-roadmap.md`、`docs/butler-plan.md`、`docs/voice-plan.md`、`SPEC.md`
 
 ## 1. 问题
@@ -27,28 +27,46 @@
 文件：`<DSH_HOME>/pet-persona/self.jsonl`（追加写，按需压缩）
 
 ```json
-{"v":1,"id":"s_...","petId":"main","kind":"event","text":"陪主人聊了会儿天","quote":"","valence":0.2,"energy":0.6,"importance":2,"createdAt":"2026-11-15T03:20:00.000Z","hash":"...","source":"chat"}
+{"v":1,"id":"s_...","petId":"main","kind":"event","text":"陪主人聊了会儿天","quote":"","valence":0.2,"energy":0.6,"emotions":[{"key":"joy","label":"开心","score":0.46},{"key":"tiredness","label":"疲惫","score":0.5}],"importance":2,"createdAt":"2026-11-18T12:00:00.000Z","hash":"...","source":"chat"}
 ```
 
 - `kind`: `event`（发生的事）| `feeling`（明确的情绪事件）| `thought`（P2 反思，P1 不产生）
 - `text`: ≤80 字，不含敏感信息；命中敏感词时降级为「和主人聊了会儿天」。
 - `quote`: 可选原话 ≤60 字，仅当非敏感。
 - `valence`: -1..1；`energy`: 0..1。
+- `emotions`: 多标签数组，最多 4 项 `{key,label,score}`；8 类为 `joy/affection/sadness/anger/anxiety/tiredness/surprise/calm`，同一句话可同时命中多类。旧记录无此字段时，读取时按 valence/energy 回退。
 - 上限 `selfMaxEntries`（默认 500）；超过 1.5 倍时压缩，保留最近 500 条。
 - 心情不单独存状态文件，由事件按时间衰减现算，避免状态与事件打架。
 
-## 4. 心情算法（P1）
+## 4. 心情算法（P1 → v0.11.0 多情绪）
 
-对最近 24h 的事件做指数衰减加权：
+### 4.1 单条事件：多标签情绪
 
-- 半衰期 6h：`w = 0.5 ** (ageHours / 6)`；
-- `valence = Σ(w * v * importance) / Σ(w * importance)`，夹到 -1..1；
-- `energy = 0.5 + Σ(w * (e - 0.5)) / Σw`，夹到 0..1；
-- 无事件时 `valence=0, energy=0.5`，标签「平静」。
+`lib/emotion.js` 用轻量词典识别 8 类情绪，不调用模型：
 
-标签：`valence ≥ .35` 开心；`≥ .1` 不错；`≤ -.35` 难过/生气；`≤ -.1` 有点低落；否则平静。`energy ≥ .7` 精神；`≤ .35` 困倦；否则一般。
+| key | 标签 | 例子 |
+| --- | --- | --- |
+| joy | 开心 | 开心、好耶、喜欢、终于、来啦 |
+| affection | 亲近 | 抱抱、贴贴、想你、亲亲、心疼 |
+| sadness | 难过 | 难过、委屈、呜呜、想哭 |
+| anger | 生气 | 生气、讨厌、不理我、生气啦 |
+| anxiety | 担心 | 担心、紧张、害怕、怎么办 |
+| tiredness | 疲惫 | 累、困、熬夜、睡着、没精神 |
+| surprise | 惊讶 | 诶、欸、咦、哇、居然 |
+| calm | 平静 | 平静、还好、没事、慢慢来 |
 
-情绪来源只做轻量词典 + 对话长度/感叹号，不调用 LLM（P1 零额外 token）。
+- 每个命中给一个权重，最高 1；否定词（不/没/别/无）会跳过该命中；“不开心”会额外加难过分。
+- 输出 `emotions`（按分数排序，最多 4 项）、`valence`、`energy`、`mixText`。
+- 混合文案：主情绪 + 次情绪（次 ≥ 主 × 0.55）时生成，如“开心但有点累”“又气又委屈”“开心里带点生气”；单情绪时只显示标签。
+- 普通闲聊没有命中时落到“平静”，不硬编情绪。
+
+### 4.2 当前心情：按情绪分别聚合
+
+- 对最近 48h 事件做 6h 半衰期加权：`w = 0.5 ** (ageHours / 6) * importance`。
+- 每种情绪单独累加 `Σ(w * score)`，再除以“有非平静情绪的事件权重”，避免大量中性记录把情绪稀释成 0。
+- “平静”只作为没有任何非平静情绪时的兜底，不参与和开心/生气等竞争。
+- 返回前 4 类 `emotions`；`mixText` 用同样规则融合；`valence/energy` 仍保留用于“心情/精力”双条。
+- 无事件时：`valence=0, energy=0.5, emotions=[平静]`。
 
 ## 5. 写入路径
 
@@ -74,8 +92,9 @@
 
 设置页第六个 tab「它自己」：
 
-- 顶部心情卡：valence/energy 双条 + 标签 + 最近更新时间；
-- 时间线：kind 徽章、text、原话、时间；空态提示「和它聊几句，它才会慢慢有自己的一天」；
+- 顶部心情卡：`mixText`（如“开心里带点生气”）+ 前 4 类情绪徽章（带百分比）+ valence/energy 双条 + 最近更新时间；
+- 脑图：以「我」为根，按 8 类情绪分支聚合最近经历，一条经历可落在多个标签里；点圆点看详情；
+- 时间线：kind 徽章、多情绪标签、text、原话、时间；空态提示「和它聊几句，它才会慢慢有自己的一天」；
 - 刷新按钮；不提供编辑（避免伪造记忆）；提供「清空自我记忆」需二次确认（P1 可只做后端 reset）。
 
 ## 8. API
@@ -110,17 +129,27 @@
 6. petId 隔离；reset 只清指定宠物；
 7. 记录失败不影响 capture/facts（注入抛错的 store）。
 
+多情绪（`test/emotion.test.js` 6 项）：
+
+8. “今天好开心，但是有点累”同时命中 joy + tiredness，`mixText` 含“开心/累”；
+9. “不开心”不算开心，会加难过分；
+10. “又气又委屈”同时命中 anger + sadness；
+11. 亲近与开心可同时出现；
+12. 普通闲聊落到平静，不硬编情绪；
+13. `SelfStore` 记录混合情绪，`state()` 聚合出多类情绪。
+
 验收（真实宿主）：
 
 - 说「记住，我叫阿岚」→ 主人事实仍正常；「它自己」出现一条 event；
 - 说「谢谢你，真乖」→ 心情变好；说「你好烦」→ 变差；
 - 重启/热重载后时间线与心情延续；
 - 关闭 `selfEnabled` 后不再写，但 facts/voice 不受影响；
-- 原有 55 条单测 + 11 条验收仍全绿。
+- 全量 124 条单测 + 11 条验收保持全绿。
 
 ## 11. 里程碑
 
-- P1（本次）：self 存储 + 心情算法 + 记录 + API + 展示 + 单测；不注入。
+- P1（本次）：self 存储 + 多情绪算法 + 记录 + API + 展示 + 单测；不注入。
+- P1.5（v0.11.0）：单轴情绪升级为 8 类多标签 + 混合文案 + 脑图按情绪分支；旧记录回填 `emotions`。
 - P2：注入心情块（可关）+ 预算/冲突验收。
 - P3（可选）：LLM 反思（低频、可关、严格限长），以及“重要日子”事件。
 
@@ -151,3 +180,18 @@
 - P2a 已实现：`selfInject` 默认关，开启后追加独立【现在的我】块；`test/self-context.test.js` 11 项、
   全量 74/74，真实 `/self/state` 与 `/self/preview` 已验证。
 - 尚未实测：真实桌宠回合开启注入后的 system 尾部（需用户同意打开开关并聊一轮）。
+
+## 14. 多情绪实施记录（v0.11.0，2026-11-18）
+
+- 新代码：`lib/emotion.js`（8 类情绪词典、否定词处理、混合文案、valence/energy）；`lib/self.js`
+  写入 `emotions`、`state()` 按情绪单独聚合且不让“平静”淹没其他情绪；`client.js` 心情卡多情绪徽章、
+  脑图按 8 类分支、时间线/详情多标签。
+- 数据迁移：一次性脚本回填 47 条旧记录的 `emotions`（按 text+quote 重新分析），并重算 valence/energy；
+  旧记录不会因此改写文本或事实。
+- 前端：设置页「它自己」需 `Ctrl+Shift+R` 硬刷新；顶部显示混合文案 + 情绪百分比，脑图分支不再是
+  “好/平静”5 档。
+- 实测 `/pet-persona/api/self/state`（回填后）：
+  `mixText:"开心里带点生气"`，`emotions` 前四项为开心 28% / 生气 22% / 疲惫 17% / 惊讶 15%。
+- 验证：`test/emotion.test.js` 6 项；全量 **124/124**（facts 10 / recall 7 / learn 10 / index 8 / ui 14 /
+  voice 6 / self 8 / emotion 6 / self-context 11 / models 7 / agency 12 / autonomy 12 / whisper 4 / tts-emotion 9）。
+- 边界：情绪仍只用于展示与 P2 注入提示，不改 `whisperPrompt`；一条经历的多标签只是描述，不合并成新的人格设定。
