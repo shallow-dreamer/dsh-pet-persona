@@ -347,9 +347,9 @@ window.__ModuleLoader__.load({
           }
         }
       }
-      pushBlob({ rx: 1.04 * R, ry: 0.82 * R, rz: 1.14 * R, latN: 44, lonN: 66 })
-      pushBlob({ cy: -0.6 * R, cz: -0.5 * R, rx: 0.4 * R, ry: 0.26 * R, rz: 0.3 * R, latN: 14, lonN: 20, fixed: 'tiredness' })
-      pushBlob({ cy: -0.52 * R, cz: -0.08 * R, rx: 0.13 * R, ry: 0.42 * R, rz: 0.13 * R, latN: 10, lonN: 14, fixed: 'tiredness' })
+      pushBlob({ rx: 1.04 * R, ry: 0.82 * R, rz: 1.14 * R, latN: 76, lonN: 132 })
+      pushBlob({ cy: -0.6 * R, cz: -0.5 * R, rx: 0.4 * R, ry: 0.26 * R, rz: 0.3 * R, latN: 22, lonN: 34, fixed: 'tiredness' })
+      pushBlob({ cy: -0.52 * R, cz: -0.08 * R, rx: 0.13 * R, ry: 0.42 * R, rz: 0.13 * R, latN: 16, lonN: 22, fixed: 'tiredness' })
       return faces.map((face) => {
         const ux = face.b[0] - face.a[0]
         const uy = face.b[1] - face.a[1]
@@ -432,10 +432,10 @@ window.__ModuleLoader__.load({
         const culled = n2z < 0
         const diff = Math.max(0, (n1x * L[0] + n1y * L[1] + n2z * L[2]) / ll)
         const rim = (1 - Math.abs(n2z)) ** 2
-        const groove = face.fixed ? 1 : 0.82 + 0.18 * (0.5 + 0.5 * Math.sin(11 * face.u * Math.PI * 2 + 2.2 * Math.sin(4 * face.v * Math.PI) + 0.8))
+        const groove = face.fixed ? 1 : 0.88 + 0.12 * (0.5 + 0.5 * Math.sin(11 * face.u * Math.PI * 2 + 2.2 * Math.sin(4 * face.v * Math.PI) + 0.8))
         const key = face.fixed && !rgbOf[face.fixed] ? (shares[0]?.key || 'calm') : (face.fixed || brainKeyAt(face.mx, face.my, face.mz, shares))
         const isSelected = Boolean(selected) && key === selected
-        const shade = (0.34 + 0.66 * diff) * groove * (isSelected ? 1.16 : 1)
+        const shade = (0.44 + 0.56 * diff) * groove * (isSelected ? 1.16 : 1)
         const spec = diff ** 18 * 0.18
         const base = rgbOf[key] || fallback
         const r = Math.min(255, base[0] * shade + rim * 110 + spec * 255) | 0
@@ -450,19 +450,8 @@ window.__ModuleLoader__.load({
           culled,
         })
       }
-      // 先用全部面（含背面）铺一层底色，避免深沟里被剔除的面露出画布黑底。
-      for (const item of drawn) {
-        ctx.beginPath()
-        ctx.moveTo(item.points[0][0], item.points[0][1])
-        for (let i = 1; i < 4; i += 1) ctx.lineTo(item.points[i][0], item.points[i][1])
-        ctx.closePath()
-        ctx.fillStyle = '#1b2330'
-        ctx.fill()
-        ctx.strokeStyle = '#1b2330'
-        ctx.lineWidth = 1
-        ctx.stroke()
-      }
-      const visible = drawn.filter((item) => !item.culled)
+      // 不再剔除背面：按深度全画，背面先画、正面后盖，深沟不会露底。
+      const visible = drawn
       visible.sort((a, b) => a.depth - b.depth)
       for (const item of visible) {
         ctx.beginPath()
