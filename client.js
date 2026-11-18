@@ -1718,8 +1718,10 @@ window.__ModuleLoader__.load({
 
     function SelfTab({ data, petName, config, onSaved }) {
       const state = data?.state || { moodText: '平静 · 一般', valence: 0, energy: 0.5, events: 0 }
+      const presence = data?.presence || null
       const events = Array.isArray(data?.events) ? data.events : []
       const kindLabel = { event: '经历', feeling: '心情', thought: '想法' }
+      const labelFor = (row) => (row?.source === 'whisper' && row?.sleeping === true ? '梦话' : kindLabel[row?.kind] || '经历')
       const [view, setView] = useState('map')
       const [selected, setSelected] = useState(null)
       const [injectCfg, setInjectCfg] = useState(() => ({
@@ -1863,7 +1865,7 @@ window.__ModuleLoader__.load({
         ? h('div', { style: { ...S.card, background: C.input, marginTop: '4px', marginBottom: 0 } },
           h('div', { style: { ...S.row, justifyContent: 'space-between' } },
             h('span', { style: { ...S.chip, color: selected.valence >= 0 ? C.ok : C.danger } },
-              `${kindLabel[selected.kind] || '经历'} · ${emotionText(selected)}`),
+              `${labelFor(selected)} · ${emotionText(selected)}`),
             selected.source && selected.source !== 'chat'
               ? h('span', { style: S.chip },
                 selected.source === 'autonomy' ? '自主决定'
@@ -2108,7 +2110,10 @@ window.__ModuleLoader__.load({
         h('div', { style: S.card },
           h('div', { style: { ...S.row, justifyContent: 'space-between', marginBottom: '8px' } },
             h('div', { style: { fontSize: '13px', fontWeight: 700 } }, `${petName}最近的心情`),
-            h('span', { style: S.chip }, state.moodText || '平静 · 一般'),
+            h('div', { style: S.row },
+              h('span', { style: S.chip }, state.moodText || '平静 · 一般'),
+              presence ? h('span', { style: presence.sleeping ? S.chip : S.chipHot }, presence.sleeping ? '睡着' : '醒着') : null,
+            ),
           ),
           h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' } },
             (Array.isArray(state.emotions) ? state.emotions : []).slice(0, 4).map((emotion) => h('span', {
@@ -2171,7 +2176,7 @@ window.__ModuleLoader__.load({
               },
               h('div', { style: { ...S.row, justifyContent: 'space-between' } },
                 h('span', { style: { ...S.chip, color: event.valence >= 0 ? C.ok : C.danger } },
-                  `${kindLabel[event.kind] || '经历'} · ${emotionText(event)}`),
+                  `${labelFor(event)} · ${emotionText(event)}`),
                 h('span', { style: S.hint }, fmtTime(event.createdAt)),
               ),
               h('div', { style: { fontSize: '12px', marginTop: '3px' } }, event.text),

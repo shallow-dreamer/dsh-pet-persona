@@ -158,3 +158,20 @@ test('reset 只清指定宠物', async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('睡着时的梦话情绪权重按 0.35 计', async () => {
+  const dir = tempDir()
+  try {
+    const now = Date.now()
+    const store = new SelfStore({ dir, now: () => now })
+    store.initSync()
+    store.note({ petId: 'main', text: '梦到被追', source: 'whisper', valence: -1, energy: 0.2, importance: 5, sleeping: true })
+    store.note({ petId: 'main', text: '今天真开心', source: 'whisper', valence: 1, energy: 0.8, importance: 5 })
+    const state = store.state('main')
+    // 醒着 +1 对 睡着的 -0.35：valence = (1 - 0.35) / 1.35 ≈ 0.481
+    assert.ok(Math.abs(state.valence - 0.481) < 0.02)
+    await flush(store)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

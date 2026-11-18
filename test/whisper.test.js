@@ -76,3 +76,27 @@ test('同一 counter 不重复记录', async () => {
   await sleep(30)
   assert.equal(self.rows.length, 1)
 })
+
+test('睡着时的气泡记成梦话并带上 sleeping 标记', async () => {
+  const self = fakeSelf()
+  let counter = 1
+  let text = '旧'
+  let sleeping = true
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    async json() {
+      return { pets: { main: { say: { counter, data: { text } }, sleep: { data: { sleeping } } } } }
+    },
+  })
+  const watch = createWhisperWatch({ self, getOrigin: () => 'http://x', fetchImpl, settleMs: 5 })
+  await watch.poll()
+  counter = 2
+  text = '梦到大鱼'
+  await watch.poll()
+  await sleep(30)
+  assert.equal(self.rows.length, 1)
+  assert.equal(self.rows[0].sleeping, true)
+  assert.match(self.rows[0].text, /梦话：梦到大鱼/)
+  assert.equal(watch.status().sleeping, true)
+})
