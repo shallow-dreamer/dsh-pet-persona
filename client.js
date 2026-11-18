@@ -314,7 +314,7 @@ window.__ModuleLoader__.load({
     const buildBrain3D = () => {
       const faces = []
       const R = BRAIN3D_RADIUS
-      const pushBlob = ({ cx = 0, cy = 0, cz = 0, rx, ry, rz, latN, lonN, fixed = null }) => {
+      const pushBlob = ({ cx = 0, cy = 0, cz = 0, rx, ry, rz, latN, lonN, fixed = null, deep = false }) => {
         const grid = []
         for (let i = 0; i <= latN; i += 1) {
           const v = i / latN
@@ -345,13 +345,29 @@ window.__ModuleLoader__.load({
             const b = grid[i + 1][j]
             const c = grid[i + 1][j + 1]
             const d = grid[i][j + 1]
-            faces.push({ a, b, c, d, fixed, u: (a[3] + c[3]) / 2, v: (a[4] + c[4]) / 2 })
+            faces.push({ a, b, c, d, fixed, deep, center: deep ? [cx, cy, cz] : null, u: (a[3] + c[3]) / 2, v: (a[4] + c[4]) / 2 })
           }
         }
       }
       pushBlob({ rx: 1.04 * R, ry: 0.82 * R, rz: 1.14 * R, latN: 76, lonN: 132 })
       pushBlob({ cy: -0.6 * R, cz: -0.5 * R, rx: 0.4 * R, ry: 0.26 * R, rz: 0.3 * R, latN: 22, lonN: 34, fixed: 'tiredness' })
       pushBlob({ cy: -0.52 * R, cz: -0.08 * R, rx: 0.13 * R, ry: 0.42 * R, rz: 0.13 * R, latN: 16, lonN: 22, fixed: 'tiredness' })
+      for (const [key, anchor] of Object.entries(BRAIN_REGIONS)) {
+        if (!EMO_COLOR[key]) continue
+        const nr = 0.115 * R
+        pushBlob({
+          cx: anchor.x * R,
+          cy: anchor.y * R,
+          cz: anchor.z * R,
+          rx: nr,
+          ry: nr * 0.82,
+          rz: nr,
+          latN: 10,
+          lonN: 16,
+          fixed: key,
+          deep: true,
+        })
+      }
       return faces.map((face) => {
         const ux = face.b[0] - face.a[0]
         const uy = face.b[1] - face.a[1]
@@ -422,22 +438,34 @@ window.__ModuleLoader__.load({
       const L = [-0.36, 0.72, 0.6]
       const ll = Math.hypot(L[0], L[1], L[2])
       const drawn = []
+      const shareOf = {}
+      for (const item of shares) shareOf[item.key] = item.share
       for (const face of BRAIN3D_FACES) {
-        const pa = project(face.a[0], face.a[1], face.a[2])
-        const pb = project(face.b[0], face.b[1], face.b[2])
-        const pc = project(face.c[0], face.c[1], face.c[2])
-        const pd = project(face.d[0], face.d[1], face.d[2])
         const n1x = face.nx * cosY - face.nz * sinY
         const n1z = face.nx * sinY + face.nz * cosY
         const n1y = face.ny * cosX - n1z * sinX
         const n2z = face.ny * sinX + n1z * cosX
+        if (face.deep && !shareOf[face.fixed]) continue
+        const seeThrough = !face.deep && !face.fixed && n2z > 0.42
+        const k = face.deep ? Math.min(1.15, 0.58 + 0.5 * Math.sqrt(shareOf[face.fixed] || 0.02)) : 1
+        const tx = (v) => face.center ? [face.center[0] + (v[0] - face.center[0]) * k, face.center[1] + (v[1] - face.center[1]) * k, face.center[2] + (v[2] - face.center[2]) * k] : v
+        const va = tx(face.a)
+        const vb = tx(face.b)
+        const vc = tx(face.c)
+        const vd = tx(face.d)
+        const pa = project(va[0], va[1], va[2])
+        const pb = project(vb[0], vb[1], vb[2])
+        const pc = project(vc[0], vc[1], vc[2])
+        const pd = project(vd[0], vd[1], vd[2])
         const culled = n2z < 0
         const diff = Math.max(0, (n1x * L[0] + n1y * L[1] + n2z * L[2]) / ll)
         const rim = (1 - Math.abs(n2z)) ** 2
         const groove = face.fixed ? 1 : 0.88 + 0.12 * (0.5 + 0.5 * Math.sin(11 * face.u * Math.PI * 2 + 2.2 * Math.sin(4 * face.v * Math.PI) + 0.8))
         const key = face.fixed && !rgbOf[face.fixed] ? (shares[0]?.key || 'calm') : (face.fixed || brainKeyAt(face.mx, face.my, face.mz, shares))
         const isSelected = Boolean(selected) && key === selected
-        const shade = (0.44 + 0.56 * diff) * groove * (isSelected ? 1.16 : 1)
+        const inner = !face.deep && culled ? 0.55 : 1
+        const glow = face.deep ? 1.12 : 1
+        const shade = (0.44 + 0.56 * diff) * groove * (isSelected ? 1.16 : 1) * inner * glow
         const spec = diff ** 18 * 0.18
         const base = rgbOf[key] || fallback
         const r = Math.min(255, base[0] * shade + rim * 110 + spec * 255) | 0
@@ -449,6 +477,8 @@ window.__ModuleLoader__.load({
           depth: (pa[2] + pb[2] + pc[2] + pd[2]) / 4,
           points: [[pa[0], pa[1]], [pb[0], pb[1]], [pc[0], pc[1]], [pd[0], pd[1]]],
           selected: isSelected,
+          seeThrough,
+          deep: face.deep,
           culled,
         })
       }
@@ -456,6 +486,7 @@ window.__ModuleLoader__.load({
       const visible = drawn
       visible.sort((a, b) => a.depth - b.depth)
       for (const item of visible) {
+        ctx.globalAlpha = 1
         ctx.beginPath()
         ctx.moveTo(item.points[0][0], item.points[0][1])
         for (let i = 1; i < 4; i += 1) ctx.lineTo(item.points[i][0], item.points[i][1])
@@ -466,6 +497,18 @@ window.__ModuleLoader__.load({
         ctx.lineWidth = item.selected ? 1 : 0.9
         ctx.stroke()
       }
+      ctx.globalAlpha = 1
+      for (const item of visible) {
+        if (!item.deep) continue
+        ctx.globalAlpha = 0.72
+        ctx.beginPath()
+        ctx.moveTo(item.points[0][0], item.points[0][1])
+        for (let i = 1; i < 4; i += 1) ctx.lineTo(item.points[i][0], item.points[i][1])
+        ctx.closePath()
+        ctx.fillStyle = item.fill
+        ctx.fill()
+      }
+      ctx.globalAlpha = 1
       if (calmRatio > 0) {
         ctx.save()
         ctx.globalCompositeOperation = 'source-atop'
@@ -1965,11 +2008,14 @@ window.__ModuleLoader__.load({
             y: (event.clientY - rect.top) * (canvas.height / rect.height),
           }
           const hits = brainHitsRef.current
-          for (let index = hits.faces.length - 1; index >= 0; index -= 1) {
-            const face = hits.faces[index]
-            if (pointInPoly(point.x, point.y, face.points)) {
-              pickEmotion(face.key)
-              return
+          for (const deepPass of [true, false]) {
+            for (let index = hits.faces.length - 1; index >= 0; index -= 1) {
+              const face = hits.faces[index]
+              if (Boolean(face.deep) !== deepPass) continue
+              if (pointInPoly(point.x, point.y, face.points)) {
+                pickEmotion(face.key)
+                return
+              }
             }
           }
         }
@@ -2061,7 +2107,7 @@ window.__ModuleLoader__.load({
             h('span', { style: { display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: EMO_COLOR.calm, marginRight: '4px' } }),
             `平静度 ${percent(calmRatio)}：平静是底色，不计入彩色占比，只把整体压暗一点。`),
           h('div', { style: { ...S.hint, marginTop: '4px' } },
-            `每种情绪像一层有颜色的水，一起填满整个脑壳：面积约等于它在全部情绪权重里的占比（共 ${events.length} 条经历）；多种情绪的经历会分别计入各情绪占比，主图不再画融合；拖动旋转、滚轮缩放、双击复位，点色块或下方标签查看这类情绪的对话。`),
+            `每种情绪像一层有颜色的水，一起填满整个脑壳：面积约等于它在全部情绪权重里的占比（共 ${events.length} 条经历）；深部核团（杏仁核、伏隔核、蓝斑等）用半透明小球透出来，点它们也能查看；多种情绪的经历会分别计入各情绪占比，主图不再画融合。拖动旋转、滚轮缩放、双击复位。`),
           h('div', { style: { ...S.hint, marginTop: '2px' } },
             '脑区位置：伏隔核=开心 · 岛叶=亲近 · 前扣带=难过 · 杏仁核=生气 · 杏仁核前部=担心 · 脑干=疲惫 · 蓝斑=惊讶 · 内侧前额叶=平静。'),
           detail(),

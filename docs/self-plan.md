@@ -195,3 +195,15 @@
 - 验证：`test/emotion.test.js` 6 项；全量 **124/124**（facts 10 / recall 7 / learn 10 / index 8 / ui 14 /
   voice 6 / self 8 / emotion 6 / self-context 11 / models 7 / agency 12 / autonomy 12 / whisper 4 / tts-emotion 9）。
 - 边界：情绪仍只用于展示与 P2 注入提示，不改 `whisperPrompt`；一条经历的多标签只是描述，不合并成新的人格设定。
+
+## 15. 梦话与在场状态（v0.17.0，2026-11-18）
+
+- 动机：dsh-pet 有睡觉/起来，睡着时的碎碎念其实是梦话；梦话也会影响心情，但不该和醒着时等权。
+- 在场状态：`lib/whisper.js` 轮询 `/dsh-pet-7340/state` 时顺带读 `pets.<id>.sleep.data.sleeping`，
+  `status()` 带 `sleeping/checkedAt`；`lib/ui.js` 的 `/self`、`/self/state` 返回 `presence`；
+  客户端「它自己」心情卡显示「醒着/睡着」，并在 `/self` 没有 `presence` 时直接读 dsh-pet `/state` 兜底。
+- 梦话：睡着时记下的气泡文本为「睡着时说了句梦话：…」，事件带 `sleeping: true`；醒着仍是「自己嘟囔了一句：…」。
+- 权重：`lib/self.js` 的 `SLEEP_WHISPER_FACTOR = 0.35`，心情/情绪聚合时 `source=whisper && sleeping`
+  的事件权重乘 0.35（醒着为 1）。只影响这类事件，不改聊天与主人事实。
+- 旧数据：重启前的 whisper 记录没有 `sleeping`，不回填、不重新标记。
+- 验证：`test/whisper.test.js` 新增梦话标记 1 项；`test/self.test.js` 新增 0.35 权重 1 项；全量测试全过。
