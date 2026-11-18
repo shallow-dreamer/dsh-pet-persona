@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -170,6 +170,42 @@ test('睡着时的梦话情绪权重按 0.35 计', async () => {
     const state = store.state('main')
     // 醒着 +1 对 睡着的 -0.35：valence = (1 - 0.35) / 1.35 ≈ 0.481
     assert.ok(Math.abs(state.valence - 0.481) < 0.02)
+    await flush(store)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('重新加载后保留 sleeping 标记', async () => {
+  const dir = tempDir()
+  try {
+    const now = Date.now()
+    const store = new SelfStore({ dir, now: () => now })
+    store.initSync()
+    store.note({ petId: 'main', text: '梦到小鱼干', source: 'whisper', valence: -0.4, energy: 0.2, importance: 2, sleeping: true })
+    await flush(store)
+    const again = new SelfStore({ dir, now: () => now })
+    again.initSync()
+    assert.equal(again.recent('main', 5)[0].sleeping, true)
+    await flush(again)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('旧梦话记录按文案前缀继续降权', async () => {
+  const dir = tempDir()
+  try {
+    const now = Date.now()
+    const lines = [
+      { v: 1, id: 's_dream', petId: 'main', kind: 'thought', text: '睡着时说了句梦话：呜', quote: '', valence: -1, energy: 0.2, emotions: [{ key: 'sadness', score: 1 }], importance: 5, createdAt: new Date(now).toISOString(), hash: 'dream', source: 'whisper' },
+      { v: 1, id: 's_awake', petId: 'main', kind: 'thought', text: '今天真开心', quote: '', valence: 1, energy: 0.8, emotions: [{ key: 'joy', score: 1 }], importance: 5, createdAt: new Date(now).toISOString(), hash: 'awake', source: 'whisper' },
+    ]
+    writeFileSync(join(dir, 'self.jsonl'), lines.map((row) => JSON.stringify(row)).join('\n') + '\n')
+    const store = new SelfStore({ dir, now: () => now })
+    store.initSync()
+    const state = store.state('main')
+    assert.ok(Math.abs(state.valence - 0.481) < 0.02, `valence=${state.valence}`)
     await flush(store)
   } finally {
     rmSync(dir, { recursive: true, force: true })

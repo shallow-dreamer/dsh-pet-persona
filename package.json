@@ -1,6 +1,6 @@
 {
   "name": "dsh-pet-persona",
-  "version": "0.17.1",
+  "version": "0.17.2",
   "type": "module",
   "description": "给 dsh-pet 补上跨会话长期事实记忆、自我记忆、免手语音与受限自治：注册 memory provider，recall 纯同步注入【长期记忆】，capture 异步抽取事实并记录自身经历；设置页提供记忆脑图、人格预览、它自己时间线、声纹语音与「自主」待确认动作。",
   "main": "index.js",
