@@ -76,7 +76,7 @@ window.__ModuleLoader__.load({
       'anxiety+surprise': '#d09ac8',
       'calm+joy': '#a8d8b0',
     }
-    const MAP_CAMERA = { rotX: -8, rotY: 14, zoom: 1.05 }
+    const MAP_CAMERA = { rotX: -8, rotY: 22, zoom: 1.05 }
     const MAP_RADIUS = 180
 
     const mapHash32 = (value) => {
@@ -305,6 +305,214 @@ window.__ModuleLoader__.load({
       const anchor = BRAIN_REGIONS[key]
       if (!anchor) return mapProject(0, 0, 0, camera)
       return mapProject(anchor.x * MAP_RADIUS, anchor.y * MAP_RADIUS, anchor.z * MAP_RADIUS, camera)
+    }
+
+    // —— 3D 脑模型：真网格 + 表面脑回 + 情绪色水（canvas 绘制） ——
+    const BRAIN3D_RADIUS = 170
+    const buildBrain3D = () => {
+      const faces = []
+      const R = BRAIN3D_RADIUS
+      const pushBlob = ({ cx = 0, cy = 0, cz = 0, rx, ry, rz, latN, lonN, fixed = null }) => {
+        const grid = []
+        for (let i = 0; i <= latN; i += 1) {
+          const v = i / latN
+          const theta = v * Math.PI
+          const row = []
+          for (let j = 0; j <= lonN; j += 1) {
+            const u = j / lonN
+            const phi = u * Math.PI * 2
+            const sx = Math.sin(theta) * Math.cos(phi)
+            const sy = Math.cos(theta)
+            const sz = Math.sin(theta) * Math.sin(phi)
+            let rad = 1
+            if (!fixed) {
+              rad += 0.05 * Math.max(0, sz) - 0.025 * Math.max(0, -sz)
+              rad += 0.06 * Math.exp(-(((sy + 0.1) / 0.3) ** 2 + ((Math.abs(sx) - 0.84) / 0.24) ** 2 + ((sz + 0.02) / 0.55) ** 2))
+              rad += 0.042 * Math.sin(8 * phi + 1.6 * Math.sin(3 * theta))
+              rad += 0.03 * Math.sin(5 * theta + 1.1 * Math.sin(4 * phi))
+              rad += 0.018 * Math.sin(13 * phi + 2.2 * theta)
+              rad -= 0.026 * Math.pow(Math.max(0, Math.sin(7 * phi + 2.1 * theta)), 6)
+            }
+            row.push([cx + sx * rx * rad, cy + sy * ry * rad, cz + sz * rz * rad, u, v])
+          }
+          grid.push(row)
+        }
+        for (let i = 0; i < latN; i += 1) {
+          for (let j = 0; j < lonN; j += 1) {
+            const a = grid[i][j]
+            const b = grid[i + 1][j]
+            const c = grid[i + 1][j + 1]
+            const d = grid[i][j + 1]
+            faces.push({ a, b, c, d, fixed, u: (a[3] + c[3]) / 2, v: (a[4] + c[4]) / 2 })
+          }
+        }
+      }
+      pushBlob({ rx: 1.04 * R, ry: 0.82 * R, rz: 1.14 * R, latN: 44, lonN: 66 })
+      pushBlob({ cy: -0.6 * R, cz: -0.5 * R, rx: 0.4 * R, ry: 0.26 * R, rz: 0.3 * R, latN: 14, lonN: 20, fixed: 'tiredness' })
+      pushBlob({ cy: -0.52 * R, cz: -0.08 * R, rx: 0.13 * R, ry: 0.42 * R, rz: 0.13 * R, latN: 10, lonN: 14, fixed: 'tiredness' })
+      return faces.map((face) => {
+        const ux = face.b[0] - face.a[0]
+        const uy = face.b[1] - face.a[1]
+        const uz = face.b[2] - face.a[2]
+        const vx = face.d[0] - face.a[0]
+        const vy = face.d[1] - face.a[1]
+        const vz = face.d[2] - face.a[2]
+        let nx = uy * vz - uz * vy
+        let ny = uz * vx - ux * vz
+        let nz = ux * vy - uy * vx
+        const len = Math.hypot(nx, ny, nz) || 1
+        nx /= len; ny /= len; nz /= len
+        const mx = (face.a[0] + face.b[0] + face.c[0] + face.d[0]) / 4
+        const my = (face.a[1] + face.b[1] + face.c[1] + face.d[1]) / 4
+        const mz = (face.a[2] + face.b[2] + face.c[2] + face.d[2]) / 4
+        if (nx * mx + ny * my + nz * mz < 0) { nx = -nx; ny = -ny; nz = -nz }
+        const cl = Math.hypot(mx, my, mz) || 1
+        return { ...face, nx, ny, nz, mx: mx / cl, my: my / cl, mz: mz / cl }
+      })
+    }
+    const BRAIN3D_FACES = buildBrain3D()
+
+    const brainKeyAt = (nx, ny, nz, shares) => {
+      let best = shares[0]?.key || 'calm'
+      let bestScore = Infinity
+      for (const item of shares) {
+        const anchor = BRAIN_REGIONS[item.key]
+        if (!anchor) continue
+        const len = Math.hypot(anchor.x, anchor.y, anchor.z) || 1
+        const dot = Math.max(-1, Math.min(1, (nx * anchor.x + ny * anchor.y + nz * anchor.z) / len))
+        const angle = Math.acos(dot)
+        const wobble = 0.05 * Math.sin(4 * Math.atan2(nz, nx) + 2.4 * ny) + 0.04 * Math.sin(7 * ny - 3 * Math.atan2(nz, nx))
+        const score = (angle + wobble) ** 2 - 10 * item.share
+        if (score < bestScore) { bestScore = score; best = item.key }
+      }
+      return best
+    }
+
+    const hexRgb = (hex) => {
+      const value = String(hex || '#9fb6c9').replace('#', '')
+      return [parseInt(value.slice(0, 2), 16), parseInt(value.slice(2, 4), 16), parseInt(value.slice(4, 6), 16)]
+    }
+
+    const drawBrain3D = (canvas, { shares, camera, selected, fusions }) => {
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return { faces: [], fusions: [] }
+      const W = canvas.width
+      const H = canvas.height
+      ctx.clearRect(0, 0, W, H)
+      const ry = (camera.rotY * Math.PI) / 180
+      const rx = (camera.rotX * Math.PI) / 180
+      const cosY = Math.cos(ry)
+      const sinY = Math.sin(ry)
+      const cosX = Math.cos(rx)
+      const sinX = Math.sin(rx)
+      const zoom = Number(camera.zoom) || 1
+      const project = (x, y, z) => {
+        const x1 = x * cosY - z * sinY
+        const z1 = x * sinY + z * cosY
+        const y1 = y * cosX - z1 * sinX
+        const z2 = y * sinX + z1 * cosX
+        const scale = (520 / (520 + z2)) * zoom
+        return [W / 2 + x1 * scale, H / 2 - y1 * scale, z2]
+      }
+      const rgbOf = {}
+      for (const item of shares) rgbOf[item.key] = hexRgb(item.color)
+      const fallback = hexRgb(EMO_COLOR.calm)
+      const L = [-0.36, 0.72, 0.6]
+      const ll = Math.hypot(L[0], L[1], L[2])
+      const drawn = []
+      for (const face of BRAIN3D_FACES) {
+        const pa = project(face.a[0], face.a[1], face.a[2])
+        const pb = project(face.b[0], face.b[1], face.b[2])
+        const pc = project(face.c[0], face.c[1], face.c[2])
+        const pd = project(face.d[0], face.d[1], face.d[2])
+        const n1x = face.nx * cosY - face.nz * sinY
+        const n1z = face.nx * sinY + face.nz * cosY
+        const n1y = face.ny * cosX - n1z * sinX
+        const n2z = face.ny * sinX + n1z * cosX
+        if (n2z < 0) continue
+        const diff = Math.max(0, (n1x * L[0] + n1y * L[1] + n2z * L[2]) / ll)
+        const rim = (1 - Math.abs(n2z)) ** 2
+        const groove = face.fixed ? 1 : 0.82 + 0.18 * (0.5 + 0.5 * Math.sin(11 * face.u * Math.PI * 2 + 2.2 * Math.sin(4 * face.v * Math.PI) + 0.8))
+        const key = face.fixed && !rgbOf[face.fixed] ? (shares[0]?.key || 'calm') : (face.fixed || brainKeyAt(face.mx, face.my, face.mz, shares))
+        const isSelected = Boolean(selected) && key === selected
+        const shade = (0.34 + 0.66 * diff) * groove * (isSelected ? 1.16 : 1)
+        const spec = diff ** 18 * 0.18
+        const base = rgbOf[key] || fallback
+        const r = Math.min(255, base[0] * shade + rim * 110 + spec * 255) | 0
+        const g = Math.min(255, base[1] * shade + rim * 110 + spec * 255) | 0
+        const b = Math.min(255, base[2] * shade + rim * 118 + spec * 255) | 0
+        drawn.push({
+          key,
+          fill: `rgb(${r},${g},${b})`,
+          depth: (pa[2] + pb[2] + pc[2] + pd[2]) / 4,
+          points: [[pa[0], pa[1]], [pb[0], pb[1]], [pc[0], pc[1]], [pd[0], pd[1]]],
+          selected: isSelected,
+        })
+      }
+      drawn.sort((a, b) => a.depth - b.depth)
+      for (const item of drawn) {
+        ctx.beginPath()
+        ctx.moveTo(item.points[0][0], item.points[0][1])
+        for (let i = 1; i < 4; i += 1) ctx.lineTo(item.points[i][0], item.points[i][1])
+        ctx.closePath()
+        ctx.fillStyle = item.fill
+        ctx.fill()
+        ctx.strokeStyle = item.selected ? 'rgba(255,255,255,.55)' : item.fill
+        ctx.lineWidth = item.selected ? 0.9 : 0.5
+        ctx.stroke()
+      }
+      const fusionHits = []
+      for (const fusion of fusions) {
+        const [a, b] = fusion.key.split('+')
+        const pa = brainProject(a, camera)
+        const pb = brainProject(b, camera)
+        const cx = (pa.sx + pb.sx) / 2
+        const cy = (pa.sy + pb.sy) / 2
+        ctx.save()
+        ctx.setLineDash([2, 6])
+        ctx.strokeStyle = fusion.color
+        ctx.globalAlpha = 0.55
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(pa.sx, pa.sy)
+        ctx.lineTo(pb.sx, pb.sy)
+        ctx.stroke()
+        ctx.restore()
+        ctx.beginPath()
+        ctx.ellipse(cx, cy, 10 + Math.sqrt(fusion.count) * 5, (10 + Math.sqrt(fusion.count) * 5) * 0.64, 0, 0, Math.PI * 2)
+        ctx.fillStyle = fusion.color
+        ctx.globalAlpha = 0.2
+        ctx.fill()
+        ctx.globalAlpha = 1
+        fusionHits.push({ key: fusion.key, cx, cy, rx: 10 + Math.sqrt(fusion.count) * 5, ry: (10 + Math.sqrt(fusion.count) * 5) * 0.64 })
+      }
+      if (selected) {
+        const info = shares.find((item) => item.key === selected)
+        const site = brainProject(selected, camera)
+        if (info && site) {
+          const label = `${info.label} ${Math.round(info.share * 100)}%`
+          ctx.font = '700 13px system-ui, "Microsoft YaHei"'
+          ctx.textAlign = 'center'
+          ctx.lineWidth = 3
+          ctx.strokeStyle = 'rgba(8,14,24,.8)'
+          ctx.strokeText(label, site.sx, site.sy - 4)
+          ctx.fillStyle = C.text
+          ctx.fillText(label, site.sx, site.sy - 4)
+        }
+      }
+      return { faces: drawn, fusions: fusionHits }
+    }
+
+    const pointInPoly = (x, y, points) => {
+      let inside = false
+      for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+        const xi = points[i][0]
+        const yi = points[i][1]
+        const xj = points[j][0]
+        const yj = points[j][1]
+        if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi || 1e-9) + xi) inside = !inside
+      }
+      return inside
     }
 
     // —— 脑壳（风格化侧视轮廓）与「情绪像水填满脑壳」的加权 Voronoi 色块 ——
@@ -1533,6 +1741,8 @@ window.__ModuleLoader__.load({
       const [selectedEmotion, setSelectedEmotion] = useState('')
       const [fusionKey, setFusionKey] = useState('')
       const mapSvgRef = useRef(null)
+      const brainCanvasRef = useRef(null)
+      const brainHitsRef = useRef({ faces: [], fusions: [] })
       const mapDragRef = useRef(null)
       const mapMovedRef = useRef(false)
       const pickEmotion = (key) => {
@@ -1609,7 +1819,7 @@ window.__ModuleLoader__.load({
       }
       useEffect(() => { void loadPreview() }, [])
       useEffect(() => {
-        const element = mapSvgRef.current
+        const element = brainCanvasRef.current
         if (!element || view !== 'map' || mapMode !== '3d') return undefined
         const onWheel = (event) => {
           event.preventDefault()
@@ -1621,6 +1831,16 @@ window.__ModuleLoader__.load({
         element.addEventListener('wheel', onWheel, { passive: false })
         return () => element.removeEventListener('wheel', onWheel)
       }, [view, mapMode])
+      useEffect(() => {
+        const canvas = brainCanvasRef.current
+        if (!canvas || view !== 'map' || mapMode !== '3d') return
+        const { shares } = brainShares(events)
+        const activeKeys = new Set(shares.map((item) => item.key))
+        const fusions = mapClusterFusions(events).filter((fusion) => {
+          return fusion.key.split('+').every((key) => key !== 'calm' && activeKeys.has(key))
+        }).slice(0, 5)
+        brainHitsRef.current = drawBrain3D(canvas, { shares, camera, selected: selectedEmotion, fusions })
+      }, [view, mapMode, camera, selectedEmotion, events])
       const saveInject = async () => {
         setSavingInject(true)
         setInjectError('')
@@ -1714,13 +1934,35 @@ window.__ModuleLoader__.load({
           callback()
         }
         const percent = (value) => (value > 0 && value < 0.005 ? '<1%' : `${Math.round(value * 100)}%`)
-        const sites = shares.map((item) => ({
-          ...item,
-          ...brainProject(item.key, camera),
-          weight: item.share * 90000,
-        }))
-        const cells = voronoiCells(sites)
-        const siteOf = (key) => sites.find((site) => site.key === key)
+        const clickBrain = (event) => {
+          if (mapMovedRef.current) return
+          const canvas = brainCanvasRef.current
+          if (!canvas) return
+          const rect = canvas.getBoundingClientRect()
+          const point = {
+            x: (event.clientX - rect.left) * (canvas.width / rect.width),
+            y: (event.clientY - rect.top) * (canvas.height / rect.height),
+          }
+          const hits = brainHitsRef.current
+          const fusion = hits.fusions.find((item) => {
+            const dx = (point.x - item.cx) / item.rx
+            const dy = (point.y - item.cy) / item.ry
+            return dx * dx + dy * dy <= 1
+          })
+          if (fusion) {
+            setSelected(null)
+            setSelectedEmotion('')
+            setFusionKey((prev) => (prev === fusion.key ? '' : fusion.key))
+            return
+          }
+          for (let index = hits.faces.length - 1; index >= 0; index -= 1) {
+            const face = hits.faces[index]
+            if (pointInPoly(point.x, point.y, face.points)) {
+              pickEmotion(face.key)
+              return
+            }
+          }
+        }
         const activeKeys = new Set(shares.map((item) => item.key))
         const fusionNodes = mapClusterFusions(events).filter((fusion) => {
           return fusion.key.split('+').every((key) => key !== 'calm' && activeKeys.has(key))
@@ -1805,13 +2047,17 @@ window.__ModuleLoader__.load({
           return null
         }
         return h('div', null,
-          h('svg', {
-            ref: mapSvgRef,
-            viewBox: '0 0 640 540',
+          h('canvas', {
+            ref: brainCanvasRef,
+            width: 640,
+            height: 540,
             style: {
               width: '100%',
-              height: '430px',
+              height: 'auto',
+              aspectRatio: '640 / 540',
               display: 'block',
+              borderRadius: '10px',
+              background: 'radial-gradient(circle at 46% 40%, #17202e, #0b1018 72%)',
               cursor: mapDragRef.current ? 'grabbing' : 'grab',
               touchAction: 'none',
               userSelect: 'none',
@@ -1820,128 +2066,11 @@ window.__ModuleLoader__.load({
             onPointerMove: pointerMove,
             onPointerUp: pointerUp,
             onPointerLeave: pointerUp,
+            onClick: clickBrain,
             onDoubleClick: () => setCamera(MAP_CAMERA),
             role: 'img',
-            'aria-label': '三维情绪脑区图',
-          },
-            h('defs', null,
-              sites.map((site) => h('radialGradient', {
-                key: `fluid-${site.key}`,
-                id: `fluid-${site.key}`,
-                gradientUnits: 'userSpaceOnUse',
-                cx: site.sx,
-                cy: site.sy,
-                r: 150 * site.scale,
-              },
-                h('stop', { offset: '0%', stopColor: site.color, stopOpacity: 0.98 }),
-                h('stop', { offset: '62%', stopColor: site.color, stopOpacity: 0.9 }),
-                h('stop', { offset: '100%', stopColor: site.color, stopOpacity: 0.8 }),
-              )),
-              h('clipPath', { id: 'brain-clip' },
-                h('path', { d: BRAIN_PATH }),
-                h('ellipse', BRAIN_CEREBELLUM),
-                h('path', { d: BRAIN_STEM }),
-              ),
-              h('filter', { id: 'brain-fluid', x: '-20%', y: '-20%', width: '140%', height: '140%' },
-                h('feGaussianBlur', { stdDeviation: 3 }),
-              ),
-              h('radialGradient', { id: 'brain-vignette', cx: '50%', cy: '45%', r: '65%' },
-                h('stop', { offset: '55%', stopColor: '#000', stopOpacity: 0 }),
-                h('stop', { offset: '100%', stopColor: '#050a12', stopOpacity: 0.6 }),
-              ),
-              h('radialGradient', { id: 'brain-light', cx: '50%', cy: '50%', r: '50%' },
-                h('stop', { offset: '0%', stopColor: '#fff', stopOpacity: 0.14 }),
-                h('stop', { offset: '100%', stopColor: '#fff', stopOpacity: 0 }),
-              ),
-            ),
-            h('g', { clipPath: 'url(#brain-clip)' },
-              h('path', { d: BRAIN_PATH, fill: '#0e1624' }),
-              h('g', { filter: 'url(#brain-fluid)' },
-                cells.map((cell) => h('path', {
-                  key: `cell-${cell.key}`,
-                  d: cell.d,
-                  fill: `url(#fluid-${cell.key})`,
-                  onClick: pick(() => pickEmotion(cell.key)),
-                  style: { cursor: 'pointer' },
-                  role: 'button',
-                  'aria-label': `${cell.label} ${percent(cell.share)}`,
-                })),
-              ),
-              ['M 205 200 q 45 -22 85 -6 q 40 16 78 -4', 'M 175 250 q 55 -16 95 4 q 40 20 82 2', 'M 205 300 q 45 18 88 2 q 45 -16 85 6', 'M 300 150 q 40 -18 75 -2 q 30 14 62 -2'].map((d, index) => h('path', {
-                key: `gyri-${index}`,
-                d,
-                fill: 'none',
-                stroke: '#0a1220',
-                strokeOpacity: 0.16,
-                strokeWidth: 2.4,
-                strokeLinecap: 'round',
-              })),
-              h('path', { d: BRAIN_PATH, fill: 'url(#brain-vignette)' }),
-              h('ellipse', { cx: 250, cy: 160, rx: 150, ry: 90, fill: 'url(#brain-light)' }),
-            ),
-            h('path', { d: BRAIN_PATH, fill: 'none', stroke: '#8fa6c8', strokeOpacity: 0.45, strokeWidth: 1.6 }),
-            h('ellipse', { ...BRAIN_CEREBELLUM, fill: 'none', stroke: '#8fa6c8', strokeOpacity: 0.35, strokeWidth: 1.2 }),
-            h('path', { d: BRAIN_STEM, fill: 'none', stroke: '#8fa6c8', strokeOpacity: 0.35, strokeWidth: 1.2 }),
-            h('g', { clipPath: 'url(#brain-clip)', style: { pointerEvents: 'none' } },
-              cells.filter((cell) => cell.key === selectedEmotion).map((cell) => h('path', {
-                key: `outline-${cell.key}`,
-                d: cell.d,
-                fill: 'none',
-                stroke: C.text,
-                strokeWidth: 2.2,
-                strokeOpacity: 0.9,
-              })),
-              cells.filter((cell) => cell.key === selectedEmotion).map((cell) => h('text', {
-                key: `label-${cell.key}`,
-                x: cell.sx,
-                y: cell.sy - 2,
-                textAnchor: 'middle',
-                fill: C.text,
-                fontSize: 13,
-                fontWeight: 700,
-                style: { paintOrder: 'stroke', stroke: 'rgba(8,14,24,.75)', strokeWidth: 3 },
-              }, `${cell.label} ${percent(cell.share)}`)),
-            ),
-            fusionNodes.map((fusion) => h('line', {
-              key: `bridge-${fusion.key}`,
-              x1: fusion.pa.sx,
-              y1: fusion.pa.sy,
-              x2: fusion.pb.sx,
-              y2: fusion.pb.sy,
-              stroke: fusion.color,
-              strokeWidth: 2,
-              strokeDasharray: '2 6',
-              opacity: 0.4,
-            })),
-
-            fusionNodes.map((fusion) => h('g', {
-              key: `fusion-${fusion.key}`,
-              style: { cursor: 'pointer' },
-              onClick: pick(() => {
-                setSelected(null)
-                setSelectedEmotion('')
-                setFusionKey((prev) => (prev === fusion.key ? '' : fusion.key))
-              }),
-            },
-              h('ellipse', {
-                cx: fusion.sx,
-                cy: fusion.sy,
-                rx: fusion.radius,
-                ry: fusion.radius * 0.64,
-                fill: fusion.color,
-                opacity: 0.22,
-              }),
-              h('circle', { cx: fusion.sx, cy: fusion.sy, r: 3, fill: fusion.color }),
-              h('text', {
-                x: fusion.sx,
-                y: fusion.sy - fusion.radius * 0.7 - 3,
-                textAnchor: 'middle',
-                fill: fusion.color,
-                fontSize: 9,
-                fontWeight: 600,
-              }, `${fusion.name} ×${fusion.count}`),
-            )),
-          ),
+            'aria-label': '三维情绪脑模型',
+          }),
           h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 8px', marginTop: '6px' } },
             shares.map((item) => h('button', {
               key: item.key,
