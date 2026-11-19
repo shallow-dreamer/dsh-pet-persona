@@ -164,6 +164,11 @@ export function apply(ctx, rawConfig = {}) {
           sleepAt: config.energySleepAt,
           wakeAt: config.energyWakeAt,
           wakePenalty: config.energyWakePenalty,
+          workEnabled: config.energyWorkEnabled !== false,
+          workDrainPerHour: config.energyWorkDrainPerHour,
+          thinkDrainPerHour: config.energyThinkDrainPerHour,
+          waitDrainPerHour: config.energyWaitDrainPerHour,
+          resultDrainPerHour: config.energyResultDrainPerHour,
         },
       })
       energy = createEnergyWatch({

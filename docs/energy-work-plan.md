@@ -122,13 +122,27 @@ drainFor(state) = {
 - A7 `/state` 连不上：按最近档位算，连续 3 次失败退回空闲；不出现瞬间掉光。
 - A8 设置页改「工作时消耗」并保存，下一 tick 生效。
 
-## 9. 待拍板
+## 9. 已拍板（2026-11-20，m01997）
 
-1. `working` 18 点/小时（3×）是否合适？想更狠可以 24，想温和 12。
-2. 工作中延后睡觉：10 分钟够不够？还是干脆「工作期间不睡，直到空闲」？
-3. 睡着时主人开始新会话，要不要「迷迷糊糊醒一下」？默认不醒。
-4. `waiting` 比空闲还省（4 点）是否符合直觉？
-5. 是否要把倍率暴露到设置页，还是只给一个「工作时消耗」数字？
+1. `working` 18 点/小时（3×）——**合适**，按此实现。
+2. 工作中到睡线先延后 10 分钟——**够**，到点仍睡；睡着时不被工作叫醒。
+3. `waiting` 4 点/小时——**合理**。
+4. 倍率**暴露到设置页**：空闲/工作/思考/等待/整理各一个数字输入。
+5. （原第 5 条：睡着时主人开始新会话是否醒）保持默认不醒。
+
+## 9.1 实现记录（v0.19.0）
+
+- `lib/energy.js`：`ENERGY_DEFAULTS` 增 `workEnabled/workDrainPerHour/thinkDrainPerHour/
+  waitDrainPerHour/resultDrainPerHour/workSleepDelayMs/workStaleMs`；`drainFor(workState)` 查表，
+  关掉 `workEnabled` 回落 `awakeDrainPerHour`；entry 持久化 `workState`。
+- watch 读 `sections.workStatus.data.state`，按 `WORK_STATUS_STATES` 校验；同档 >90 分钟记
+  `energy_work_stale` 并退回空闲，连续 3 次读失败也退回空闲；阈值台词按是否工作分两组。
+- 睡线：`working`（thinking/working/result）时先延后 10 分钟并说「这段还没写完…等写完了再睡。」，
+  到点说「撑不住了…先睡会儿。」再 POST `/sleep`；睡着后清空延后。
+- 配置与设置页：`energyWorkEnabled/energyWorkDrainPerHour/energyThinkDrainPerHour/
+  energyWaitDrainPerHour/energyResultDrainPerHour`，工作速率下限跟随空闲速率、上限 60。
+- 精力条下方提示在 `workState` 非空时显示「工作中 · 每小时约消耗 N 点」。
+- 测试：`test/energy.test.js` 13 项（新增档位速率、workEnabled 关、90min 卡死、10min 延后）。
 
 ## 10. 风险
 

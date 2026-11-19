@@ -292,3 +292,92 @@ test('满精力手动睡不会被自动醒', async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('工作档位按状态速率消耗，关掉后回到空闲速率', () => {
+  const dir = tempDir()
+  try {
+    let at = Date.parse('2026-11-20T00:00:00Z')
+    const store = createEnergyStore({
+      dir,
+      config: { start: 100, workDrainPerHour: 18, thinkDrainPerHour: 12, waitDrainPerHour: 4, resultDrainPerHour: 9, awakeDrainPerHour: 6 },
+      now: () => at,
+    })
+    store.setWork('working', at)
+    at += 1 * HOUR
+    assert.equal(Math.round(store.level(at)), 82)
+    store.setWork('thinking', at)
+    at += 2 * HOUR
+    assert.equal(Math.round(store.level(at)), 58)
+    store.setWork('waiting', at)
+    at += 1 * HOUR
+    assert.equal(Math.round(store.level(at)), 54)
+    store.setWork('result', at)
+    at += 1 * HOUR
+    assert.equal(Math.round(store.level(at)), 45)
+    store.setWork(null, at)
+    at += 1 * HOUR
+    assert.equal(Math.round(store.level(at)), 39)
+
+    const off = createEnergyStore({
+      dir: tempDir(),
+      config: { start: 100, workEnabled: false, workDrainPerHour: 18, awakeDrainPerHour: 6 },
+      now: () => at,
+    })
+    off.setWork('working', at)
+    at += 1 * HOUR
+    assert.equal(Math.round(off.level(at)), 94)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('读 dsh-pet 工作状态并在 90 分钟后判定卡死', async () => {
+  const dir = tempDir()
+  try {
+    let at = Date.parse('2026-11-20T00:00:00Z')
+    const store = createEnergyStore({ dir, config: { start: 100 }, now: () => at })
+    const fetchImpl = fakeFetch((url) => {
+      if (url.includes('/state')) {
+        return { body: { pets: { main: { sleep: { data: { sleeping: false } } } }, sections: { workStatus: { data: { state: 'working' } } } } }
+      }
+      return { body: { ok: true } }
+    })
+    const watch = createEnergyWatch({ store, speak: async () => {}, getOrigin: () => 'http://127.0.0.1:1', fetchImpl, now: () => at })
+    await watch.tick()
+    assert.equal(store.workState, 'working')
+    assert.equal(watch.status().drainPerHour, 18)
+    at += 91 * 60_000
+    await watch.tick()
+    assert.equal(store.workState, null)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('工作时到睡线先拖 10 分钟再睡', async () => {
+  const dir = tempDir()
+  try {
+    let at = Date.parse('2026-11-20T00:00:00Z')
+    const store = createEnergyStore({ dir, config: { start: 12 }, now: () => at })
+    const lines = []
+    const posts = []
+    const fetchImpl = fakeFetch((url) => {
+      if (url.includes('/state')) {
+        return { body: { pets: { main: { sleep: { data: { sleeping: false } } } }, sections: { workStatus: { data: { state: 'working' } } } } }
+      }
+      posts.push(url)
+      return { body: { ok: true } }
+    })
+    const watch = createEnergyWatch({ store, speak: async (_pet, text) => lines.push(text), getOrigin: () => 'http://127.0.0.1:1', fetchImpl, now: () => at })
+    await watch.tick()
+    assert.equal(store.sleeping, false)
+    assert.equal(posts.some((u) => u.includes('/sleep')), false)
+    assert.equal(lines.includes('这段还没写完…等写完了再睡。'), true)
+    at += 10 * 60_000
+    await watch.tick()
+    assert.equal(store.sleeping, true)
+    assert.equal(posts.some((u) => u.includes('/sleep')), true)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

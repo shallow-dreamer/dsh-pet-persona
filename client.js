@@ -36,6 +36,7 @@ window.__ModuleLoader__.load({
     // —— 「它自己」3D 情绪球 ——
     // 锚点/阈值与 lib/emotion-space.js 保持一致；客户端 chunk 不能 import 服务端模块，所以这里保留一份渲染副本。
     const EMO_ORDER = ['joy', 'affection', 'sadness', 'anger', 'anxiety', 'tiredness', 'surprise', 'calm']
+    const WORK_LABELS = { thinking: '思考中', working: '工作中', result: '整理结果', waiting: '等待确认', success: '刚完成', error: '出错了' }
     const EMO_LABEL = { joy: '开心', affection: '亲近', sadness: '难过', anger: '生气', anxiety: '担心', tiredness: '疲惫', surprise: '惊讶', calm: '平静' }
     const EMO_COLOR = { joy: '#59d18b', affection: '#f08ab0', sadness: '#6aa9ff', anger: '#ff6b7a', anxiety: '#b98bff', tiredness: '#e8c15a', surprise: '#ff9f6b', calm: '#9aa4b2' }
     const MAP_ANCHORS = {
@@ -1811,6 +1812,11 @@ window.__ModuleLoader__.load({
         energySleepAt: Number(config?.energySleepAt ?? 20),
         energyWakeAt: Number(config?.energyWakeAt ?? 100),
         energyWakePenalty: Number(config?.energyWakePenalty ?? 5),
+        energyWorkEnabled: config?.energyWorkEnabled !== false,
+        energyWorkDrainPerHour: Number(config?.energyWorkDrainPerHour ?? 18),
+        energyThinkDrainPerHour: Number(config?.energyThinkDrainPerHour ?? 12),
+        energyWaitDrainPerHour: Number(config?.energyWaitDrainPerHour ?? 4),
+        energyResultDrainPerHour: Number(config?.energyResultDrainPerHour ?? 9),
       }))
       const [savingEnergy, setSavingEnergy] = useState(false)
       const [energyError, setEnergyError] = useState('')
@@ -1904,6 +1910,11 @@ window.__ModuleLoader__.load({
             energySleepAt: Number(res.config.energySleepAt ?? 20),
             energyWakeAt: Number(res.config.energyWakeAt ?? 100),
             energyWakePenalty: Number(res.config.energyWakePenalty ?? 5),
+            energyWorkEnabled: res.config.energyWorkEnabled !== false,
+            energyWorkDrainPerHour: Number(res.config.energyWorkDrainPerHour ?? 18),
+            energyThinkDrainPerHour: Number(res.config.energyThinkDrainPerHour ?? 12),
+            energyWaitDrainPerHour: Number(res.config.energyWaitDrainPerHour ?? 4),
+            energyResultDrainPerHour: Number(res.config.energyResultDrainPerHour ?? 9),
           })
         } catch (error) {
           setEnergyError(String(error?.message ?? error))
@@ -2242,7 +2253,9 @@ window.__ModuleLoader__.load({
             ? h('div', { style: { ...S.hint, marginTop: '4px' } },
               liveEnergy.sleeping
                 ? `睡着时每 10 分钟恢复 ${Math.round((Number(liveEnergy.recoverPerHour) || 36) / 6)} 点，满 ${liveEnergy.wakeAt ?? 100} 自动醒。`
-                : `醒着每小时消耗 ${liveEnergy.drainPerHour ?? 6} 点，低于 ${liveEnergy.sleepAt ?? 20} 会自动睡。`)
+                : ['thinking', 'working', 'result', 'waiting'].includes(liveEnergy.workState)
+                  ? `${WORK_LABELS[liveEnergy.workState] || '工作中'} · 每小时约消耗 ${Math.round(Number(liveEnergy.drainPerHour) || 6)} 点，低于 ${liveEnergy.sleepAt ?? 20} 会自动睡。`
+                  : `醒着每小时消耗 ${liveEnergy.drainPerHour ?? 6} 点，低于 ${liveEnergy.sleepAt ?? 20} 会自动睡。`)
             : null,
           h('div', { style: { ...S.hint, marginTop: '8px' } },
             `最近 ${state.events || 0} 条自我记忆${state.updatedAt ? ` · 更新于 ${fmtTime(state.updatedAt)}` : ''}`),
@@ -2253,7 +2266,7 @@ window.__ModuleLoader__.load({
             h('span', { style: energyCfg.energyEnabled ? S.chipHot : S.chip }, energyCfg.energyEnabled ? '已开启' : '已关闭'),
           ),
           h('div', { style: { ...S.hint, marginBottom: '8px' } },
-            `醒着每小时消耗 ${energyCfg.energyDrainPerHour} 点，睡着每小时恢复 ${energyCfg.energyRecoverPerHour} 点；精力低于 ${energyCfg.energySleepAt} 会自动睡，睡满 ${energyCfg.energyWakeAt} 自动醒。`),
+            `空闲每小时消耗 ${energyCfg.energyDrainPerHour} 点；工作 ${energyCfg.energyWorkDrainPerHour}、思考 ${energyCfg.energyThinkDrainPerHour}、等待 ${energyCfg.energyWaitDrainPerHour}、整理 ${energyCfg.energyResultDrainPerHour} 点/小时；睡着每小时恢复 ${energyCfg.energyRecoverPerHour} 点，低于 ${energyCfg.energySleepAt} 自动睡、睡满 ${energyCfg.energyWakeAt} 自动醒。`),
           h('label', { style: { ...S.row, ...S.hint, cursor: 'pointer', marginBottom: '8px' } },
             h('input', {
               type: 'checkbox',
@@ -2262,8 +2275,18 @@ window.__ModuleLoader__.load({
             }),
             '开启精力养成（关掉后精力条不再自动变化）',
           ),
+          h('label', { style: { ...S.row, ...S.hint, cursor: 'pointer', marginBottom: '8px' } },
+            h('input', {
+              type: 'checkbox',
+              checked: energyCfg.energyWorkEnabled,
+              onChange: (event) => setEnergyCfg((prev) => ({ ...prev, energyWorkEnabled: event.target.checked })),
+            }),
+            '按 dsh-pet 工作状态分档消耗（思考/工作/整理/等待）',
+          ),
           h('div', { style: { ...S.row, gap: '10px', flexWrap: 'wrap', marginBottom: '8px' } },
-            [['初始', 'energyStart', 0, 100, 60], ['消耗/h', 'energyDrainPerHour', 0.5, 30, 70],
+            [['初始', 'energyStart', 0, 100, 60], ['空闲/h', 'energyDrainPerHour', 0.5, 30, 70],
+              ['工作/h', 'energyWorkDrainPerHour', 6, 60, 70], ['思考/h', 'energyThinkDrainPerHour', 1, 60, 70],
+              ['等待/h', 'energyWaitDrainPerHour', 0, 30, 70], ['整理/h', 'energyResultDrainPerHour', 1, 60, 70],
               ['恢复/h', 'energyRecoverPerHour', 1, 120, 74], ['睡线', 'energySleepAt', 1, 60, 62],
               ['醒线', 'energyWakeAt', 50, 100, 68], ['唤醒扣', 'energyWakePenalty', 0, 30, 68]].map(([label, key, min, max, width]) =>
               h('label', { key, style: { ...S.hint, display: 'flex', alignItems: 'center', gap: '4px' } },
