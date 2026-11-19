@@ -216,8 +216,9 @@ test('被外部唤醒扣 5 点，自己睡饱醒不扣', async () => {
     // 自动醒：睡着且满了，watch 自己唤醒，不该扣
     const dir2 = tempDir()
     let at2 = Date.parse('2026-11-20T00:00:00Z')
-    const store2 = createEnergyStore({ dir: dir2, config: { start: 100 }, now: () => at2 })
+    const store2 = createEnergyStore({ dir: dir2, config: { start: 50 }, now: () => at2 })
     store2.setSleeping(true, at2)
+    at2 += 2 * HOUR // 50 + 2h*36 → 100
     const autoFetch = fakeFetch((url) => {
       if (url.includes('/state')) return { body: { pets: { main: { sleep: { data: { sleeping: true } } } } } }
       return { body: { ok: true } }
@@ -233,6 +234,60 @@ test('被外部唤醒扣 5 点，自己睡饱醒不扣', async () => {
     assert.equal(Math.round(store2.level(at2)), 100)
     assert.equal(store2.sleeping, false)
     rmSync(dir2, { recursive: true, force: true })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('阈值按档位各报一次，降档后继续提醒', async () => {
+  const dir = tempDir()
+  try {
+    let at = Date.parse('2026-11-20T00:00:00Z')
+    const store = createEnergyStore({ dir, config: { start: 80 }, now: () => at })
+    const lines = []
+    const fetchImpl = fakeFetch((url) => {
+      if (url.includes('/state')) return { body: { pets: { main: { sleep: { data: { sleeping: false } } } } } }
+      return { body: { ok: true } }
+    })
+    const watch = createEnergyWatch({
+      store,
+      speak: async (_petId, text) => lines.push(text),
+      getOrigin: () => 'http://127.0.0.1:1',
+      fetchImpl,
+      now: () => at,
+    })
+    at += 2 * HOUR // 80 → 68
+    await watch.tick()
+    assert.equal(lines.length, 1)
+    await watch.tick()
+    assert.equal(lines.length, 1) // 同一档不重复
+    at += 5 * HOUR // 68 → 38
+    await watch.tick()
+    assert.equal(lines.length, 2) // 40 档仍要提醒（旧逻辑会卡在 70）
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('满精力手动睡不会被自动醒', async () => {
+  const dir = tempDir()
+  try {
+    let at = Date.parse('2026-11-20T00:00:00Z')
+    const store = createEnergyStore({ dir, config: { start: 100 }, now: () => at })
+    const fetchImpl = fakeFetch((url) => {
+      if (url.includes('/state')) return { body: { pets: { main: { sleep: { data: { sleeping: true } } } } } }
+      return { body: { ok: true } }
+    })
+    const watch = createEnergyWatch({
+      store,
+      speak: async () => {},
+      getOrigin: () => 'http://127.0.0.1:1',
+      fetchImpl,
+      now: () => at,
+    })
+    await watch.tick()
+    assert.equal(store.sleeping, true)
+    assert.equal(watch.status().sleeping, true)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
