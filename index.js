@@ -131,7 +131,6 @@ export function apply(ctx, rawConfig = {}) {
   } catch (error) {
     logger.warn(`whisper_watch_failed ${error?.message ?? error}`)
     whisperWatch = null
-    energy = null
   }
 
   const speak = async (petId, text) => {

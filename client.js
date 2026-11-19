@@ -1755,6 +1755,17 @@ window.__ModuleLoader__.load({
         selfInjectWindowH: Number(config?.selfInjectWindowH ?? 36),
         selfInjectQuotes: config?.selfInjectQuotes === true,
       }))
+      const [energyCfg, setEnergyCfg] = useState(() => ({
+        energyEnabled: config?.energyEnabled !== false,
+        energyStart: Number(config?.energyStart ?? 100),
+        energyDrainPerHour: Number(config?.energyDrainPerHour ?? 6),
+        energyRecoverPerHour: Number(config?.energyRecoverPerHour ?? 36),
+        energySleepAt: Number(config?.energySleepAt ?? 20),
+        energyWakeAt: Number(config?.energyWakeAt ?? 100),
+        energyWakePenalty: Number(config?.energyWakePenalty ?? 5),
+      }))
+      const [savingEnergy, setSavingEnergy] = useState(false)
+      const [energyError, setEnergyError] = useState('')
       const [preview, setPreview] = useState(data?.previewBlock || '')
       const [previewing, setPreviewing] = useState(false)
       const [savingInject, setSavingInject] = useState(false)
@@ -1831,6 +1842,26 @@ window.__ModuleLoader__.load({
             })
           })
         })
+      }
+      const saveEnergy = async () => {
+        setSavingEnergy(true)
+        setEnergyError('')
+        try {
+          const res = await api('/settings', { method: 'POST', body: JSON.stringify(energyCfg) })
+          if (res?.config) setEnergyCfg({
+            energyEnabled: res.config.energyEnabled !== false,
+            energyStart: Number(res.config.energyStart ?? 100),
+            energyDrainPerHour: Number(res.config.energyDrainPerHour ?? 6),
+            energyRecoverPerHour: Number(res.config.energyRecoverPerHour ?? 36),
+            energySleepAt: Number(res.config.energySleepAt ?? 20),
+            energyWakeAt: Number(res.config.energyWakeAt ?? 100),
+            energyWakePenalty: Number(res.config.energyWakePenalty ?? 5),
+          })
+        } catch (error) {
+          setEnergyError(String(error?.message ?? error))
+        } finally {
+          setSavingEnergy(false)
+        }
       }
       const loadPreview = async () => {
         setPreviewing(true)
@@ -2167,6 +2198,42 @@ window.__ModuleLoader__.load({
             : null,
           h('div', { style: { ...S.hint, marginTop: '8px' } },
             `最近 ${state.events || 0} 条自我记忆${state.updatedAt ? ` · 更新于 ${fmtTime(state.updatedAt)}` : ''}`),
+        ),
+        h('div', { style: S.card },
+          h('div', { style: { ...S.row, justifyContent: 'space-between', marginBottom: '8px' } },
+            h('div', { style: { fontSize: '13px', fontWeight: 700 } }, '精力'),
+            h('span', { style: energyCfg.energyEnabled ? S.chipHot : S.chip }, energyCfg.energyEnabled ? '已开启' : '已关闭'),
+          ),
+          h('div', { style: { ...S.hint, marginBottom: '8px' } },
+            `醒着每小时消耗 ${energyCfg.energyDrainPerHour} 点，睡着每小时恢复 ${energyCfg.energyRecoverPerHour} 点；精力低于 ${energyCfg.energySleepAt} 会自动睡，睡满 ${energyCfg.energyWakeAt} 自动醒。`),
+          h('label', { style: { ...S.row, ...S.hint, cursor: 'pointer', marginBottom: '8px' } },
+            h('input', {
+              type: 'checkbox',
+              checked: energyCfg.energyEnabled,
+              onChange: (event) => setEnergyCfg((prev) => ({ ...prev, energyEnabled: event.target.checked })),
+            }),
+            '开启精力养成（关掉后精力条不再自动变化）',
+          ),
+          h('div', { style: { ...S.row, gap: '10px', flexWrap: 'wrap', marginBottom: '8px' } },
+            [['初始', 'energyStart', 0, 100, 60], ['消耗/h', 'energyDrainPerHour', 0.5, 30, 70],
+              ['恢复/h', 'energyRecoverPerHour', 1, 120, 74], ['睡线', 'energySleepAt', 1, 60, 62],
+              ['醒线', 'energyWakeAt', 50, 100, 68], ['唤醒扣', 'energyWakePenalty', 0, 30, 68]].map(([label, key, min, max, width]) =>
+              h('label', { key, style: { ...S.hint, display: 'flex', alignItems: 'center', gap: '4px' } },
+                label,
+                h('input', {
+                  type: 'number', min, max, step: key === 'energyDrainPerHour' || key === 'energyRecoverPerHour' ? 0.5 : 1,
+                  value: energyCfg[key],
+                  onChange: (event) => setEnergyCfg((prev) => ({ ...prev, [key]: Number(event.target.value) })),
+                  style: { ...S.input, width: `${width}px` },
+                }),
+              ),
+            ),
+          ),
+          h('div', { style: { ...S.row, gap: '8px' } },
+            h('button', { type: 'button', style: S.primary, disabled: savingEnergy, onClick: () => void saveEnergy() },
+              savingEnergy ? '保存中…' : '保存精力设置'),
+          ),
+          energyError ? h('div', { style: { ...S.hint, color: C.danger, marginTop: '6px' } }, energyError) : null,
         ),
         h('div', { style: S.card },
           h('div', { style: { ...S.row, justifyContent: 'space-between', marginBottom: '6px' } },

@@ -173,7 +173,7 @@ asleep ──用户强行 wake 且精力=0──▶ 拒绝：立刻再睡 + 气�
 - `lib/config.js`：`energyEnabled`、`energyStart`、`energyDrainPerHour`、`energyRecoverPerHour`、`energySleepAt`、`energyWakeAt`、`energyWakePenalty`；均有 clamp。
 - `index.js`：在 `speak` 之后创建 store/watch 并 `start()`，传给 `createApiHandler`，dispose 时 `stop()`。
 - `lib/ui.js`：`/self` 与 `/self/state` 增加 `energy: { level, sleeping, updatedAt, drainPerHour, recoverPerHour, sleepAt, wakeAt }`。
-- `client.js`：心情卡精力条改用真实 `energy.level`（0–100），睡眠时显示「睡眠恢复中」，≤20 红→黄；下方提示当前速率与阈值。
+- `client.js`：心情卡精力条改用真实 `energy.level`（0–100），睡眠时显示「睡眠恢复中」，≤20 红→黄；下方提示当前速率与阈值。新增「精力」设置卡：开关、初始值、消耗/恢复速率、睡线/醒线/唤醒扣点，保存走 `/settings`（`EDITABLE` 白名单与 `publicConfig` 均已包含 energy 字段）。
 
 行为细节：
 
