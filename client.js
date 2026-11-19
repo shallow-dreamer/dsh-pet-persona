@@ -1719,7 +1719,6 @@ window.__ModuleLoader__.load({
     function SelfTab({ data, petName, config, onSaved }) {
       const state = data?.state || { moodText: '平静 · 一般', valence: 0, energy: 0.5, events: 0 }
       const energyInfo = data?.energy || null
-      const energyPct = Math.max(0, Math.min(100, Math.round(energyInfo ? Number(energyInfo.level) || 0 : (Number(state.energy) || 0) * 100)))
       const presence = data?.presence || null
       const [localPresence, setLocalPresence] = useState(null)
       useEffect(() => {
@@ -1743,6 +1742,55 @@ window.__ModuleLoader__.load({
           clearInterval(timer)
         }
       }, [presence])
+      // 精力条要动起来：先按服务器给的 updatedAt + 速率本地插值，每 10s 走一格；每 60s 拉一次 /self/state 校准。
+      const energyAnchorRef = useRef(null)
+      const [energyLive, setEnergyLive] = useState(null)
+      useEffect(() => {
+        if (!energyInfo) {
+          energyAnchorRef.current = null
+          setEnergyLive(null)
+          return undefined
+        }
+        const anchor = {
+          ...energyInfo,
+          level: Number(energyInfo.level) || 0,
+          at: Date.parse(energyInfo.updatedAt) || Date.now(),
+        }
+        energyAnchorRef.current = anchor
+        setEnergyLive(anchor)
+        const tick = () => {
+          const base = energyAnchorRef.current
+          if (!base) return
+          const hours = Math.min(1, Math.max(0, (Date.now() - base.at) / 3_600_000))
+          const rate = base.sleeping ? Number(base.recoverPerHour) || 36 : -(Number(base.drainPerHour) || 6)
+          setEnergyLive({ ...base, level: Math.max(0, Math.min(100, base.level + rate * hours)) })
+        }
+        tick()
+        const local = setInterval(tick, 10000)
+        const sync = async () => {
+          try {
+            const res = await api('/self/state')
+            const next = res?.energy
+            if (!next) return
+            const refreshed = {
+              ...next,
+              level: Number(next.level) || 0,
+              at: Date.parse(next.updatedAt) || Date.now(),
+            }
+            energyAnchorRef.current = refreshed
+            setEnergyLive(refreshed)
+          } catch {
+            /* 离线时继续本地插值 */
+          }
+        }
+        const remote = setInterval(() => void sync(), 60000)
+        return () => {
+          clearInterval(local)
+          clearInterval(remote)
+        }
+      }, [energyInfo?.level, energyInfo?.updatedAt, energyInfo?.sleeping])
+      const liveEnergy = energyLive || energyInfo
+      const energyPct = Math.max(0, Math.min(100, Math.round(liveEnergy ? Number(liveEnergy.level) || 0 : (Number(state.energy) || 0) * 100)))
       const events = Array.isArray(data?.events) ? data.events : []
       const kindLabel = { event: '经历', feeling: '心情', thought: '想法' }
       const labelFor = (row) => (row?.source === 'whisper' && row?.sleeping === true ? '梦话' : kindLabel[row?.kind] || '经历')
@@ -2186,15 +2234,15 @@ window.__ModuleLoader__.load({
             h('div', { style: { width: `${Math.round(((state.valence + 1) / 2) * 100)}%`, height: '100%', background: 'linear-gradient(90deg,#6aa9ff,#59d18b)' } }),
           ),
           h('div', { style: { ...S.hint, marginBottom: '4px' } },
-            `精力 ${energyPct}%${energyInfo?.sleeping ? ' · 睡眠恢复中' : ''}`),
+            `精力 ${energyPct}%${liveEnergy?.sleeping ? ' · 睡眠恢复中' : ''}`),
           h('div', { style: { height: '8px', borderRadius: '6px', background: C.input, overflow: 'hidden' } },
             h('div', { style: { width: `${energyPct}%`, height: '100%', background: energyPct <= 20 ? 'linear-gradient(90deg,#f2705f,#e8c15a)' : 'linear-gradient(90deg,#e8c15a,#ff9f6b)' } }),
           ),
-          energyInfo
+          liveEnergy
             ? h('div', { style: { ...S.hint, marginTop: '4px' } },
-              energyInfo.sleeping
-                ? `睡着时每 10 分钟恢复 ${Math.round((Number(energyInfo.recoverPerHour) || 36) / 6)} 点，满 ${energyInfo.wakeAt ?? 100} 自动醒。`
-                : `醒着每小时消耗 ${energyInfo.drainPerHour ?? 6} 点，低于 ${energyInfo.sleepAt ?? 20} 会自动睡。`)
+              liveEnergy.sleeping
+                ? `睡着时每 10 分钟恢复 ${Math.round((Number(liveEnergy.recoverPerHour) || 36) / 6)} 点，满 ${liveEnergy.wakeAt ?? 100} 自动醒。`
+                : `醒着每小时消耗 ${liveEnergy.drainPerHour ?? 6} 点，低于 ${liveEnergy.sleepAt ?? 20} 会自动睡。`)
             : null,
           h('div', { style: { ...S.hint, marginTop: '8px' } },
             `最近 ${state.events || 0} 条自我记忆${state.updatedAt ? ` · 更新于 ${fmtTime(state.updatedAt)}` : ''}`),
