@@ -1718,6 +1718,8 @@ window.__ModuleLoader__.load({
 
     function SelfTab({ data, petName, config, onSaved }) {
       const state = data?.state || { moodText: '平静 · 一般', valence: 0, energy: 0.5, events: 0 }
+      const energyInfo = data?.energy || null
+      const energyPct = Math.max(0, Math.min(100, Math.round(energyInfo ? Number(energyInfo.level) || 0 : (Number(state.energy) || 0) * 100)))
       const presence = data?.presence || null
       const [localPresence, setLocalPresence] = useState(null)
       useEffect(() => {
@@ -2152,10 +2154,17 @@ window.__ModuleLoader__.load({
           h('div', { style: { height: '8px', borderRadius: '6px', background: C.input, overflow: 'hidden', marginBottom: '10px' } },
             h('div', { style: { width: `${Math.round(((state.valence + 1) / 2) * 100)}%`, height: '100%', background: 'linear-gradient(90deg,#6aa9ff,#59d18b)' } }),
           ),
-          h('div', { style: { ...S.hint, marginBottom: '4px' } }, `精力 ${Math.round((state.energy || 0) * 100)}%`),
+          h('div', { style: { ...S.hint, marginBottom: '4px' } },
+            `精力 ${energyPct}%${energyInfo?.sleeping ? ' · 睡眠恢复中' : ''}`),
           h('div', { style: { height: '8px', borderRadius: '6px', background: C.input, overflow: 'hidden' } },
-            h('div', { style: { width: `${Math.round((state.energy || 0) * 100)}%`, height: '100%', background: 'linear-gradient(90deg,#e8c15a,#ff9f6b)' } }),
+            h('div', { style: { width: `${energyPct}%`, height: '100%', background: energyPct <= 20 ? 'linear-gradient(90deg,#f2705f,#e8c15a)' : 'linear-gradient(90deg,#e8c15a,#ff9f6b)' } }),
           ),
+          energyInfo
+            ? h('div', { style: { ...S.hint, marginTop: '4px' } },
+              energyInfo.sleeping
+                ? `睡着时每 10 分钟恢复 ${Math.round((Number(energyInfo.recoverPerHour) || 36) / 6)} 点，满 ${energyInfo.wakeAt ?? 100} 自动醒。`
+                : `醒着每小时消耗 ${energyInfo.drainPerHour ?? 6} 点，低于 ${energyInfo.sleepAt ?? 20} 会自动睡。`)
+            : null,
           h('div', { style: { ...S.hint, marginTop: '8px' } },
             `最近 ${state.events || 0} 条自我记忆${state.updatedAt ? ` · 更新于 ${fmtTime(state.updatedAt)}` : ''}`),
         ),

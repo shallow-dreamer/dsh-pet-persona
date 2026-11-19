@@ -32,6 +32,7 @@ import { createApiHandler, readSettings, writeSettings } from './lib/ui.js'
 import { createVoiceService } from './lib/voice.js'
 import { createEmotionTts } from './lib/tts-emotion.js'
 import { createWhisperWatch } from './lib/whisper.js'
+import { createEnergyStore, createEnergyWatch } from './lib/energy.js'
 
 export const name = 'dsh-pet-persona'
 export const inject = ['petApi7340']
@@ -130,6 +131,7 @@ export function apply(ctx, rawConfig = {}) {
   } catch (error) {
     logger.warn(`whisper_watch_failed ${error?.message ?? error}`)
     whisperWatch = null
+    energy = null
   }
 
   const speak = async (petId, text) => {
@@ -145,6 +147,42 @@ export function apply(ctx, rawConfig = {}) {
     if (!res.ok || body?.ok === false) throw new Error(`broadcast failed: ${body?.reason ?? res.status}`)
     whisperWatch?.noteSpoken(String(text ?? ''))
     return body
+  }
+
+  // 精力：独立文件与定时器；dsh-pet 不可达时只跳过本 tick。
+  /** @type {any} */
+  let energy = null
+  try {
+    if (config.energyEnabled) {
+      const energyStore = createEnergyStore({
+        dir,
+        petId: 'main',
+        log: logger,
+        config: {
+          start: config.energyStart,
+          awakeDrainPerHour: config.energyDrainPerHour,
+          asleepRecoverPerHour: config.energyRecoverPerHour,
+          sleepAt: config.energySleepAt,
+          wakeAt: config.energyWakeAt,
+          wakePenalty: config.energyWakePenalty,
+        },
+      })
+      energy = createEnergyWatch({
+        store: energyStore,
+        petId: 'main',
+        log: logger,
+        speak: (petId, text) => speak(petId, text),
+        getOrigin: () => {
+          const service = ctx?.get?.('webServer', false) ?? null
+          return typeof service?.getOrigin === 'function' ? service.getOrigin() : ''
+        },
+      })
+      energy.start()
+      logger.info(`energy_loaded ${JSON.stringify(energy.status())}`)
+    }
+  } catch (error) {
+    logger.warn(`energy_init_failed ${error?.message ?? error}`)
+    energy = null
   }
 
   let agency = null
@@ -343,7 +381,7 @@ export function apply(ctx, rawConfig = {}) {
   })()
   if (webServer && typeof webServer.register === 'function') {
     try {
-      const api = createApiHandler({ config, store, recallEngine, logger, petApi, dir, applySettings, voice, self, models, agency, autonomy, whisperWatch })
+      const api = createApiHandler({ config, store, recallEngine, logger, petApi, dir, applySettings, voice, self, models, agency, autonomy, whisperWatch, energy })
       const mount = () => {
         const off = webServer.register({ kind: 'prefix', path: '/pet-persona/api', handler: api.handler })
         logger.info(`settings_api_mounted dir=${dir}`)

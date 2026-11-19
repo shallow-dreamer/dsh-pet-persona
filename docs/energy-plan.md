@@ -1,7 +1,7 @@
 # 宠物精力模块计划书
 
-版本：v0.1（2026-11-19）
-状态：待确认（只有计划，没有实现）
+版本：v0.2（2026-11-20）
+状态：已实现（v0.18.0），待重启 DSH 后实机验证
 关联：`docs/self-plan.md`（心情/梦话）、`docs/agency-l3-plan.md`、`lib/whisper.js`、`lib/self.js`、dsh-pet 宿主
 目标插件：`dsh-pet-persona`（E:\DSH\plugins\dsh-pet-persona）
 
@@ -143,7 +143,7 @@ asleep ──用户强行 wake 且精力=0──▶ 拒绝：立刻再睡 + 气�
 - A9 没有睡觉动画时不崩，日志有一次明确提示。
 - A10 手动睡/醒与自动逻辑不打架（不会刚醒又被立刻睡回去，除非精力 0）。
 
-## 11. 待拍板
+## 11. 待拍板（已拍板）
 
 1. 消耗/恢复速率是否用 1/10min、6/10min？
 2. 初始精力 100 还是 80？
@@ -157,3 +157,31 @@ asleep ──用户强行 wake 且精力=0──▶ 拒绝：立刻再睡 + 气�
 - 自动 sleep 与 dsh-pet 菜单「睡觉」共用同一状态，用户手动操作优先，精力模块只观察和补动作。
 - 每 60s 一次 `/state` + 偶尔 POST，频率低；不要每次 tick 都 broadcast。
 - 精力为 0 时若 dsh-pet 反复被外部 wake，需要防抖（1 分钟内最多回睡 1 次、气泡 1 次）。
+
+## 13. 实现记录（v0.18.0）
+
+已拍板（2026-11-20，实施中问过使用者）：
+
+- 速率：醒着 1 点 / 10 分钟（6/h），睡着 6 点 / 10 分钟（36/h）；
+- 初始精力 100；
+- 强行唤醒扣 5 点；
+- 自动醒线 100。
+
+实现位置：
+
+- `lib/energy.js`：`createEnergyStore`（读写 `<dir>/energy.json`，按 petId 分键、临时文件 + rename、补算上限 24h、时钟回拨不变）+ `createEnergyWatch`（60s tick，读 `/dsh-pet-7340/state` 校准、阈值播报、自动睡/醒、0 精力拒醒、扣点、防抖）。
+- `lib/config.js`：`energyEnabled`、`energyStart`、`energyDrainPerHour`、`energyRecoverPerHour`、`energySleepAt`、`energyWakeAt`、`energyWakePenalty`；均有 clamp。
+- `index.js`：在 `speak` 之后创建 store/watch 并 `start()`，传给 `createApiHandler`，dispose 时 `stop()`。
+- `lib/ui.js`：`/self` 与 `/self/state` 增加 `energy: { level, sleeping, updatedAt, drainPerHour, recoverPerHour, sleepAt, wakeAt }`。
+- `client.js`：心情卡精力条改用真实 `energy.level`（0–100），睡眠时显示「睡眠恢复中」，≤20 红→黄；下方提示当前速率与阈值。
+
+行为细节：
+
+- 阈值 70/40/20/5 只在向下跨过时各播报一次；回到 75 以上重置，可再次播报。
+- ≤20 自动 `POST /sleep`；睡着 ≥100 自动 `POST /wake` 并说「睡饱了，我回来啦。」。
+- 被外部唤醒且精力 ≤0：立刻 `POST /sleep` 并说「唔…叫不醒的…」，60s 防抖；精力 >0 的强行唤醒扣 5 点。
+- `locked` / `no-sleep-animations` 只记一次日志，不刷屏。
+
+验证：`test/energy.test.js` 7 项；全量 15+1 个测试文件 143 项全过；`node --check` 通过。
+
+注意：`lib/*` 变更要重启 DSH 才生效；`energy.json` 首次启动时按 start 写入。
